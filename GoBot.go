@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"hlt"
-	"math/rand"
 	"os"
 	"sync"
 	"time"
@@ -111,11 +110,43 @@ func (f *Fields) TopThreat(cell *Cell) *FlowField {
 }
 
 func (f *Fields) String(cell *Cell) string {
-	if direction, ok := f.Border.Direction[cell]; ok {
-		if direction == hlt.STILL {
-			return fmt.Sprint(cell.Site.Owner)
+	if cell.isBorder() && cell.Site.Owner > 0 {
+		return fmt.Sprint(cell.Site.Owner)
+	} else if cell.Site.Owner > 0 {
+		if direction, ok := f.Border.Direction[cell]; ok {
+			switch direction {
+			case hlt.NORTH:
+				return "^"
+			case hlt.SOUTH:
+				return "v"
+			case hlt.WEST:
+				return "<"
+			case hlt.EAST:
+				return ">"
+			default:
+				return "x"
+			}
+		}
+		var topThreat = f.TopThreat(cell)
+		if strength, ok := topThreat.Strength[cell]; ok && strength > 0 {
+			return ":"
 		} else {
-
+			return "."
+		}
+	}
+	var topThreat = f.TopThreat(cell)
+	if direction, ok := topThreat.Direction[cell]; ok {
+		switch opposite(direction) {
+		case hlt.NORTH:
+			return "^"
+		case hlt.SOUTH:
+			return "v"
+		case hlt.WEST:
+			return "<"
+		case hlt.EAST:
+			return ">"
+		default:
+			return "x"
 		}
 	}
 	return " "
@@ -158,7 +189,7 @@ func NewBorderField(owner int, cells []*Cell, bot *Bot) *FlowField {
 		for _, direction := range hlt.CARDINALS {
 			otherCell := bot.GetCell(cell.Location, direction)
 			if otherCell.Site.Owner == owner {
-				if otherDist, ok := field.Distance[cell]; (ok && otherDist > borderDistance+1) || !ok {
+				if field.Distance[otherCell] > borderDistance+1 {
 					field.Direction[otherCell] = opposite(direction)
 					field.Distance[otherCell] = borderDistance + 1
 					stack.Push(otherCell)
@@ -230,19 +261,19 @@ func NewBot(owner int) *Bot {
 	}
 }
 
-func (bot *Bot) UpdateMap(gameMap *hlt.GameMap) {
-	bot.GameMap = gameMap
+func (bot *Bot) UpdateMap(gameMap hlt.GameMap) {
+	bot.GameMap = &gameMap
 	bot.Turn = bot.Turn + 1
-	bot.Cells = make([][]*Cell, gameMap.Height)
-	bot.OwnedCells = make([]*Cell, 1)
-	bot.EmptyCells = make([]*Cell, 1)
+	bot.Cells = make([][]*Cell, bot.Height())
+	bot.OwnedCells = make([]*Cell, 0)
+	bot.EmptyCells = make([]*Cell, 0)
 	bot.EnemyCells = make(map[int][]*Cell)
 
 	// Sorts Map Cells into "owned", "empty", and "enemy" lists
-	for y := 0; y < gameMap.Height; y++ {
-		bot.Cells[y] = make([]*Cell, gameMap.Width)
-		for x := 0; x < gameMap.Width; x++ {
-			var cell = NewCell(*gameMap, x, y)
+	for y := 0; y < bot.Height(); y++ {
+		bot.Cells[y] = make([]*Cell, bot.Width())
+		for x := 0; x < bot.Width(); x++ {
+			var cell = NewCell(&gameMap, x, y)
 			bot.SetCell(cell)
 		}
 	}
@@ -255,6 +286,23 @@ func (bot *Bot) UpdateMap(gameMap *hlt.GameMap) {
 	// and Assitence Lending Agents.
 	// Call for help radiates out, Agents with required strength answer call
 	// and begin moving to assist.  Agents die as call is answered. :D
+}
+
+func (bot *Bot) Moves() hlt.MoveSet {
+	var moves = hlt.MoveSet{}
+	for _, ownedCell := range bot.OwnedCells {
+		if ownedCell.isBorder() {
+			var direction = bot.DirectionFromProjection(ownedCell)
+			moves = append(moves, hlt.Move{Location: ownedCell.Location, Direction: direction})
+		} else if ownedCell.Site.Strength > ownedCell.Site.Production*5 {
+			var direction = bot.Fields.Border.Direction[ownedCell]
+			moves = append(moves, hlt.Move{Location: ownedCell.Location, Direction: direction})
+		}
+		// project game state forward for border pieces, score sample histories
+		// and pick best option. Projection should turn assume enemy cells Play
+		// the best move as well.
+	}
+	return moves
 }
 
 func (bot *Bot) Height() int {
@@ -284,41 +332,31 @@ func (bot *Bot) SetCell(cell *Cell) {
 	}
 }
 
+func (bot *Bot) DirectionFromProjection(cell *Cell) hlt.Direction {
+	return InitialProjection(cell, bot).BestDirection()
+}
+
 func (bot *Bot) logBot() {
 	f, err := os.OpenFile(logFile, os.O_APPEND|os.O_WRONLY, os.ModeAppend)
 	if err != nil {
 		panic(err)
 	}
 	defer f.Close()
+
+	var strArr = make([][]string, bot.GameMap.Height)
+	for y := 0; y < bot.GameMap.Height; y++ {
+		strArr[y] = make([]string, bot.GameMap.Width)
+		for x := 0; x < bot.GameMap.Width; x++ {
+			var cell = bot.Cells[y][x]
+			strArr[y][x] = bot.Fields.String(cell)
+		}
+	}
+
 	var mapStr = fmt.Sprintf("Map %d:\n", bot.Turn)
 	for y := 0; y < bot.GameMap.Height; y++ {
 		var str = ""
 		for x := 0; x < bot.GameMap.Width; x++ {
-			var cell = bot.Cells[y][x]
-			if cell.isBorder() && cell.Site.Owner > 0 {
-				str = fmt.Sprintf("%v %d ", str, cell.Site.Owner)
-				// } else if cell.Site.Owner > 0 && cell.Site.Owner != cell.ThreatOwner {
-				// 	str = fmt.Sprintf("%v : ", str)
-			} else if cell.Site.Owner > 0 {
-				str = fmt.Sprintf("%v . ", str)
-				// } else if cell.ThreatStrength > 0 {
-				// 	var dirStr string
-				// 	switch opposite(cell.ThreatDirection) {
-				// 	case hlt.NORTH:
-				// 		dirStr = "^"
-				// 	case hlt.SOUTH:
-				// 		dirStr = "v"
-				// 	case hlt.WEST:
-				// 		dirStr = "<"
-				// 	case hlt.EAST:
-				// 		dirStr = ">"
-				// 	default:
-				// 		dirStr = "x"
-				// 	}
-				// 	str = fmt.Sprintf("%v %v ", str, dirStr)
-			} else {
-				str = fmt.Sprintf("%v   ", str)
-			}
+			str = fmt.Sprintf("%v %v  ", str, strArr[y][x])
 		}
 		mapStr = fmt.Sprintf("%v%v\n", mapStr, str)
 	}
@@ -327,17 +365,88 @@ func (bot *Bot) logBot() {
 	}
 }
 
+type Projection struct {
+	Owner    int
+	Bot      *Bot
+	Depth    int
+	Cell     *Cell
+	Strength int
+	Source   *Projection
+	Score    int
+}
+
+func InitialProjection(cell *Cell, bot *Bot) *Projection {
+	return &Projection{
+		Owner:    bot.Owner,
+		Bot:      bot,
+		Depth:    0,
+		Cell:     cell,
+		Strength: cell.Site.Strength,
+		Score:    0,
+	}
+}
+
+func NewProjection(direction hlt.Direction, source *Projection, bot *Bot) *Projection {
+	var cell = bot.GetCell(source.Cell.Location, direction)
+	var strength = source.Strength
+	var score = 0
+	if cell.Site.Owner != source.Owner {
+		strength = strength - cell.Site.Strength
+		if strength > 0 && !source.InHistory(cell) {
+			score = cell.Site.Production
+		}
+	}
+	var p = &Projection{
+		Owner:    source.Owner,
+		Bot:      bot,
+		Depth:    source.Depth + 1,
+		Cell:     cell,
+		Strength: strength,
+		Source:   source,
+		Score:    score,
+	}
+	return p
+}
+
+func (p *Projection) BestDirection() hlt.Direction {
+	var bestDirection = hlt.STILL
+	var highestScore = 0
+	for _, direction := range hlt.Directions {
+		var score = NewProjection(direction, p, p.Bot).GetScore()
+		if score > highestScore {
+			bestDirection = direction
+			highestScore = score
+		}
+	}
+	return bestDirection
+}
+
+func (p *Projection) GetScore() int {
+	if p.Depth == 5 {
+		return p.Score
+	}
+	return p.Score + NewProjection(p.BestDirection(), p, p.Bot).GetScore()
+}
+
+func (p *Projection) InHistory(cell *Cell) bool {
+	if cell.Location.X == p.Cell.Location.X && cell.Location.Y == p.Cell.Location.Y {
+		return true
+	} else if p.Depth > 0 {
+		return p.Source.InHistory(cell)
+	}
+	return false
+}
+
 type Cell struct {
-	GameMap hlt.GameMap
-	// Provided Cell data
+	GameMap  *hlt.GameMap
 	Y        int
 	X        int
 	Location hlt.Location
 	Site     hlt.Site
 }
 
-func NewCell(gameMap hlt.GameMap, x int, y int) *Cell {
-	location := hlt.NewLocation(x, y)
+func NewCell(gameMap *hlt.GameMap, x int, y int) *Cell {
+	location := hlt.NewLocation(x%gameMap.Width, y%gameMap.Height)
 	site := gameMap.GetSite(location, hlt.STILL)
 	return &Cell{
 		GameMap:  gameMap,
@@ -349,11 +458,11 @@ func NewCell(gameMap hlt.GameMap, x int, y int) *Cell {
 }
 
 func (c *Cell) GetLocation(direction hlt.Direction) hlt.Location {
-	return c.GameMap.GetLocation(hlt.NewLocation(c.X, c.Y), direction)
+	return c.GameMap.GetLocation(c.Location, direction)
 }
 
 func (c *Cell) GetSite(direction hlt.Direction) hlt.Site {
-	return c.GameMap.GetSite(hlt.NewLocation(c.X, c.Y), direction)
+	return c.GameMap.GetSite(c.Location, direction)
 }
 
 func (c *Cell) isBorder() bool {
@@ -374,25 +483,14 @@ func (c *Cell) String() string {
 func main() {
 	conn, gameMap := hlt.NewConnection("BrevBot")
 	bot := NewBot(conn.PlayerTag)
-	bot.UpdateMap(&gameMap)
+	bot.UpdateMap(gameMap)
 	for {
 		var moves hlt.MoveSet
 		gameMap = conn.GetFrame()
 
 		startTime := time.Now()
-		bot.UpdateMap(&gameMap)
-		for y := 0; y < gameMap.Height; y++ {
-			for x := 0; x < gameMap.Width; x++ {
-				loc := hlt.NewLocation(x, y)
-				if gameMap.GetSite(loc, hlt.STILL).Owner == conn.PlayerTag {
-					var dir = hlt.Direction(rand.Int() % 5)
-					moves = append(moves, hlt.Move{
-						Location:  loc,
-						Direction: dir,
-					})
-				}
-			}
-		}
+		bot.UpdateMap(gameMap)
+		moves = bot.Moves()
 		log(fmt.Sprintf("Time: %v\n", time.Now().Sub(startTime)))
 
 		conn.SendFrame(moves)
