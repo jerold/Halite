@@ -11,6 +11,14 @@ import (
 
 const logFile = "goLog.txt"
 
+/*
+███████ ████████  █████   ██████ ██   ██
+██         ██    ██   ██ ██      ██  ██
+███████    ██    ███████ ██      █████
+     ██    ██    ██   ██ ██      ██  ██
+███████    ██    ██   ██  ██████ ██   ██
+*/
+
 type Stack struct {
 	lock sync.Mutex // you don't have to do this if you don't want thread safety
 	s    []*Cell
@@ -80,9 +88,18 @@ func opposite(direction hlt.Direction) hlt.Direction {
 	}
 }
 
+/*
+███████ ██ ███████ ██      ██████  ███████
+██      ██ ██      ██      ██   ██ ██
+█████   ██ █████   ██      ██   ██ ███████
+██      ██ ██      ██      ██   ██      ██
+██      ██ ███████ ███████ ██████  ███████
+*/
+
 type Fields struct {
 	Border     *FlowField
 	Initiative *FlowField
+	Support    *FlowField
 	Threat     map[int]*FlowField
 }
 
@@ -96,6 +113,7 @@ func NewFields(bot *Bot) *Fields {
 	for enemy, cells := range bot.EnemyCells {
 		f.Threat[enemy] = NewInitiativeField(enemy, cells, bot)
 	}
+	f.Support = NewSupportField(bot.Owner, bot.OwnedCells, bot)
 	return f
 }
 
@@ -110,9 +128,11 @@ func (f *Fields) TopThreat(cell *Cell) *FlowField {
 }
 
 func (f *Fields) String(cell *Cell) string {
-	if cell.isBorder() && cell.Site.Owner > 0 {
-		return fmt.Sprint(cell.Site.Owner)
-	} else if cell.Site.Owner > 0 {
+	if cell.Site.Owner > 0 && f.Support.Strength[cell] > 0 {
+		return fmt.Sprintf("%d", f.Support.Strength[cell])
+	}
+
+	if cell.Site.Owner > 0 {
 		if direction, ok := f.Border.Direction[cell]; ok {
 			switch direction {
 			case hlt.NORTH:
@@ -152,6 +172,14 @@ func (f *Fields) String(cell *Cell) string {
 	return " "
 }
 
+/*
+███████ ██       ██████  ██     ██ ███████ ██ ███████ ██      ██████
+██      ██      ██    ██ ██     ██ ██      ██ ██      ██      ██   ██
+█████   ██      ██    ██ ██  █  ██ █████   ██ █████   ██      ██   ██
+██      ██      ██    ██ ██ ███ ██ ██      ██ ██      ██      ██   ██
+██      ███████  ██████   ███ ███  ██      ██ ███████ ███████ ██████
+*/
+
 type FlowField struct {
 	Direction map[*Cell]hlt.Direction
 	Distance  map[*Cell]int
@@ -165,6 +193,14 @@ func NewFlowField(owner int) *FlowField {
 		Strength:  make(map[*Cell]int),
 	}
 }
+
+/*
+██████   ██████  ██████  ██████  ███████ ██████      ███████ ██ ███████ ██      ██████
+██   ██ ██    ██ ██   ██ ██   ██ ██      ██   ██     ██      ██ ██      ██      ██   ██
+██████  ██    ██ ██████  ██   ██ █████   ██████      █████   ██ █████   ██      ██   ██
+██   ██ ██    ██ ██   ██ ██   ██ ██      ██   ██     ██      ██ ██      ██      ██   ██
+██████   ██████  ██   ██ ██████  ███████ ██   ██     ██      ██ ███████ ███████ ██████
+*/
 
 // Direction to nearest owned border cell
 // Distance to nearest owned border cell
@@ -200,6 +236,14 @@ func NewBorderField(owner int, cells []*Cell, bot *Bot) *FlowField {
 	return field
 }
 
+/*
+██ ███    ██ ██ ████████ ██  █████  ████████ ██ ██    ██ ███████     ███████ ██ ███████ ██      ██████
+██ ████   ██ ██    ██    ██ ██   ██    ██    ██ ██    ██ ██          ██      ██ ██      ██      ██   ██
+██ ██ ██  ██ ██    ██    ██ ███████    ██    ██ ██    ██ █████       █████   ██ █████   ██      ██   ██
+██ ██  ██ ██ ██    ██    ██ ██   ██    ██    ██  ██  ██  ██          ██      ██ ██      ██      ██   ██
+██ ██   ████ ██    ██    ██ ██   ██    ██    ██   ████   ███████     ██      ██ ███████ ███████ ██████
+*/
+
 // Direction of strongest threat
 // Distance to threat source
 // Strength of threat if it were to travel to this cell without reinforcements
@@ -218,11 +262,14 @@ func NewInitiativeField(owner int, cells []*Cell, bot *Bot) *FlowField {
 	// produce strongest threat flow field
 	for stack.isNotEmpty() {
 		cell, _ := stack.Pop()
-		// var borderDistance = field.Distance[cell]
 		for _, direction := range hlt.CARDINALS {
 			otherCell := bot.GetCell(cell.Location, direction)
 			if otherCell.Site.Owner != owner {
-				var remainingStrength = field.Strength[cell] - otherCell.Site.Strength
+				var otherCellStrength = otherCell.Site.Strength
+				if otherCell.Site.Owner > 0 {
+					otherCellStrength = otherCellStrength + otherCell.Site.Production*(field.Distance[cell]+1)
+				}
+				var remainingStrength = field.Strength[cell] - otherCellStrength
 				if remainingStrength > 0 {
 					previousStrength, ok := field.Strength[otherCell]
 					if !ok || remainingStrength > previousStrength {
@@ -238,8 +285,81 @@ func NewInitiativeField(owner int, cells []*Cell, bot *Bot) *FlowField {
 	return field
 }
 
+/*
+███████ ██    ██ ██████  ██████   ██████  ██████  ████████     ███████ ██ ███████ ██      ██████
+██      ██    ██ ██   ██ ██   ██ ██    ██ ██   ██    ██        ██      ██ ██      ██      ██   ██
+███████ ██    ██ ██████  ██████  ██    ██ ██████     ██        █████   ██ █████   ██      ██   ██
+     ██ ██    ██ ██      ██      ██    ██ ██   ██    ██        ██      ██ ██      ██      ██   ██
+███████  ██████  ██      ██       ██████  ██   ██    ██        ██      ██ ███████ ███████ ██████
+*/
+
+// Represents a need. Greater needs win
+func NewSupportField(owner int, cells []*Cell, bot *Bot) *FlowField {
+	var field = NewFlowField(owner)
+	var stack = NewStack()
+	// push border cells onto the stack
+	for _, cell := range cells {
+		field.Direction[cell] = hlt.STILL
+		field.Distance[cell] = 999999
+		field.Strength[cell] = 0
+		if cell.isBorder() {
+			var target *Cell
+			var targetDirection = hlt.STILL
+			var targetHeuristic = 0.0
+			for _, direction := range hlt.CARDINALS {
+				var otherCell = bot.GetCell(cell.Location, direction)
+				if otherCell.Site.Owner != owner {
+					var otherHeuristic = otherCell.Heuristic(owner)
+					if target == nil || otherHeuristic > targetHeuristic {
+						target = otherCell
+						targetDirection = direction
+						targetHeuristic = otherHeuristic
+					}
+				}
+			}
+			if targetDirection != hlt.STILL {
+				field.Direction[cell] = targetDirection
+				field.Distance[cell] = 0
+				field.Strength[cell] = target.TotalDamage(owner) - cell.Site.Strength
+				if field.Strength[cell] < 0 {
+					field.Strength[cell] = 0
+				}
+				stack.Push(cell)
+			}
+		}
+	}
+	// produce strongest threat flow field
+	for stack.isNotEmpty() {
+		cell, _ := stack.Pop()
+		for _, direction := range hlt.CARDINALS {
+			otherCell := bot.GetCell(cell.Location, direction)
+			if otherCell.Site.Owner == owner {
+				if field.Strength[cell] > field.Strength[otherCell] {
+					field.Direction[otherCell] = opposite(direction)
+					field.Distance[otherCell] = field.Distance[cell] + 1
+					field.Strength[otherCell] = field.Strength[cell] - otherCell.Site.Strength
+					if field.Strength[otherCell] <= 0 {
+						field.Strength[otherCell] = 0
+					} else {
+						stack.Push(otherCell)
+					}
+				}
+			}
+		}
+	}
+	return field
+}
+
 type Agent struct {
 }
+
+/*
+██████   ██████  ████████
+██   ██ ██    ██    ██
+██████  ██    ██    ██
+██   ██ ██    ██    ██
+██████   ██████     ██
+*/
 
 type Bot struct {
 	Owner      int
@@ -292,12 +412,27 @@ func (bot *Bot) Moves() hlt.MoveSet {
 	var moves = hlt.MoveSet{}
 	for _, ownedCell := range bot.OwnedCells {
 		if ownedCell.isBorder() {
-			var direction = bot.DirectionFromProjection(ownedCell)
-			moves = append(moves, hlt.Move{Location: ownedCell.Location, Direction: direction})
+			var direction = bot.Fields.Support.Direction[ownedCell]
+			var targetCell = bot.GetCell(ownedCell.Location, direction)
+			var targetTotalDamage = targetCell.TotalDamage(bot.Owner)
+			if targetTotalDamage < ownedCell.Site.Strength {
+				if targetCell.Site.Owner != bot.Owner || ownedCell.Site.Strength > ownedCell.Site.Production*5 {
+					// Cell has the strength to acheive victory
+					moves = append(moves, hlt.Move{Location: ownedCell.Location, Direction: direction})
+				}
+			}
+			// var direction = bot.DirectionFromProjection(ownedCell)
+			// moves = append(moves, hlt.Move{Location: ownedCell.Location, Direction: direction})
 		} else if ownedCell.Site.Strength > ownedCell.Site.Production*5 {
-			var direction = bot.Fields.Border.Direction[ownedCell]
-			moves = append(moves, hlt.Move{Location: ownedCell.Location, Direction: direction})
+			if bot.Fields.Support.Distance[ownedCell] < 4 && bot.Fields.Support.Strength[ownedCell] > 0 {
+				moves = append(moves, hlt.Move{Location: ownedCell.Location, Direction: bot.Fields.Support.Direction[ownedCell]})
+			} else {
+				moves = append(moves, hlt.Move{Location: ownedCell.Location, Direction: bot.Fields.Border.Direction[ownedCell]})
+			}
+			// var direction = bot.Fields.Border.Direction[ownedCell]
+			// moves = append(moves, hlt.Move{Location: ownedCell.Location, Direction: direction})
 		}
+		moves = append(moves, hlt.Move{Location: ownedCell.Location, Direction: hlt.STILL})
 		// project game state forward for border pieces, score sample histories
 		// and pick best option. Projection should turn assume enemy cells Play
 		// the best move as well.
@@ -364,6 +499,14 @@ func (bot *Bot) logBot() {
 		panic(err)
 	}
 }
+
+/*
+██████  ██████   ██████       ██ ███████  ██████ ████████ ██  ██████  ███    ██
+██   ██ ██   ██ ██    ██      ██ ██      ██         ██    ██ ██    ██ ████   ██
+██████  ██████  ██    ██      ██ █████   ██         ██    ██ ██    ██ ██ ██  ██
+██      ██   ██ ██    ██ ██   ██ ██      ██         ██    ██ ██    ██ ██  ██ ██
+██      ██   ██  ██████   █████  ███████  ██████    ██    ██  ██████  ██   ████
+*/
 
 type Projection struct {
 	Owner    int
@@ -437,6 +580,14 @@ func (p *Projection) InHistory(cell *Cell) bool {
 	return false
 }
 
+/*
+ ██████ ███████ ██      ██
+██      ██      ██      ██
+██      █████   ██      ██
+██      ██      ██      ██
+ ██████ ███████ ███████ ███████
+*/
+
 type Cell struct {
 	GameMap  *hlt.GameMap
 	Y        int
@@ -455,6 +606,25 @@ func NewCell(gameMap *hlt.GameMap, x int, y int) *Cell {
 		Location: location,
 		Site:     site,
 	}
+}
+
+func (c *Cell) Heuristic(owner int) float64 {
+	if c.Site.Owner == 0 && c.Site.Strength > 0 {
+		return float64(c.Site.Production) / float64(c.Site.Strength)
+	} else {
+		return float64(c.TotalDamage(owner))
+	}
+}
+
+func (c *Cell) TotalDamage(owner int) int {
+	totalDamage := c.Site.Strength
+	for _, direction := range hlt.CARDINALS {
+		site := c.GetSite(direction)
+		if site.Owner != 0 && site.Owner != owner {
+			totalDamage += site.Strength
+		}
+	}
+	return totalDamage
 }
 
 func (c *Cell) GetLocation(direction hlt.Direction) hlt.Location {
@@ -479,6 +649,14 @@ func (c *Cell) isBorder() bool {
 func (c *Cell) String() string {
 	return fmt.Sprintf("Cell(x: %d, y: %d, owner:%d)", c.X, c.Y, c.Site.Owner)
 }
+
+/*
+███    ███  █████  ██ ███    ██
+████  ████ ██   ██ ██ ████   ██
+██ ████ ██ ███████ ██ ██ ██  ██
+██  ██  ██ ██   ██ ██ ██  ██ ██
+██      ██ ██   ██ ██ ██   ████
+*/
 
 func main() {
 	conn, gameMap := hlt.NewConnection("BrevBot")
