@@ -680,7 +680,7 @@ func (c *Cell) String() string {
 */
 
 func main() {
-	conn, gameMap := hlt.NewConnection("BrevBot")
+	conn, gameMap := hlt.NewConnection("v5")
 	bot := NewBot(conn.PlayerTag)
 	bot.UpdateMap(gameMap)
 	for {
