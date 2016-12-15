@@ -417,95 +417,121 @@ func (c *Cells) Update(gameMap hlt.GameMap) {
 func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 	clone := c.Clone()
 	// used to prevent production on cells that had movement this round
-	fightingLocations := make(map[hlt.Location]bool)
-	mapForces := make(map[hlt.Location]map[int]int)
-	effect := make(map[hlt.Location]map[int]int)
+	conflictLocations := make(map[hlt.Location]bool)
+	// forces which have moved or been recruited by moving forces,
+	// and will attack destination + Cardinal opposing forces
+	activeForces := make(map[hlt.Location]map[int]int)
 	// forces moving into new cells
 	for _, move := range moves {
 		if move.Direction != hlt.STILL {
 			fromCell := clone.Get(move.Location.X, move.Location.Y)
 			toCell := clone.GetCell(move.Location, move.Direction)
-			fightingLocations[fromCell.Location()] = true
-			fightingLocations[toCell.Location()] = true
-			if _, ok := mapForces[toCell.Location()]; !ok {
-				mapForces[toCell.Location()] = make(map[int]int)
+			conflictLocations[fromCell.Location()] = true
+			conflictLocations[toCell.Location()] = true
+			if _, ok := activeForces[toCell.Location()]; !ok {
+				activeForces[toCell.Location()] = make(map[int]int)
 			}
-			force := mapForces[toCell.Location()][fromCell.Owner] + fromCell.Strength
+			force := activeForces[toCell.Location()][fromCell.Owner] + fromCell.Strength
 			// combine strength from one owner coming from multiple cells to a max of 255
-			mapForces[toCell.Location()][fromCell.Owner] = min(255, force)
+			activeForces[toCell.Location()][fromCell.Owner] = min(255, force)
+			fromCell.Owner = NEUTRAL
 			fromCell.Strength = 0
 		}
 	}
-	// apply damage for each force moved to each opposing strength
-	for location, cellForces := range mapForces {
-		cell := clone.Get(location.X, location.Y)
-		if _, ok := effect[location]; !ok {
-			effect[location] = make(map[int]int)
-		}
-		for owner, force := range cellForces {
-			// take on previous cell owner's strength
-			if cell.Owner != owner {
-				effect[location][cell.Owner] += force
-			}
-			// damage other forces moving into this cell
-			for otherOwner := range cellForces {
-				// cell Owner effect already accounted for
-				if otherOwner != owner && otherOwner != cell.Owner {
-					effect[location][otherOwner] += force
-				}
-			}
-			// Overkill from cardinals only for non neutral strengths
-			for _, direction := range hlt.CARDINALS {
-				neighborCell := c.GetCell(location, direction)
-				if owner != neighborCell.Owner && neighborCell.Owner != NEUTRAL {
-					fightingLocations[neighborCell.Location()] = true
-					// take on neighbor strength
-					if _, ok := effect[neighborCell.Location()]; !ok {
-						effect[neighborCell.Location()] = make(map[int]int)
+	// forces which are brought into conflict by orthogonally adjacent active forces
+	passiveForces := make(map[hlt.Location]map[int]int)
+	// forces moving into new cells
+	for _, move := range moves {
+		if move.Direction != hlt.STILL {
+			toCell := clone.GetCell(move.Location, move.Direction)
+			for _, direction := range hlt.Directions {
+				neighborCell := clone.GetCell(toCell.Location(), direction)
+				conflictLocations[neighborCell.Location()] = true
+				if _, ok := activeForces[neighborCell.Location()][neighborCell.Owner]; ok {
+					force := activeForces[neighborCell.Location()][neighborCell.Owner] + neighborCell.Strength
+					activeForces[neighborCell.Location()][neighborCell.Owner] = min(255, force)
+					neighborCell.Strength = 0
+				} else {
+					if _, ok := passiveForces[neighborCell.Location()]; !ok {
+						passiveForces[neighborCell.Location()] = make(map[int]int)
 					}
-					effect[neighborCell.Location()][neighborCell.Owner] += force
-					// neighbor takes its turn out on force
-					effect[location][owner] += neighborCell.Strength
+					force := passiveForces[neighborCell.Location()][neighborCell.Owner] + neighborCell.Strength
+					// combine strength from one owner coming from multiple cells to a max of 255
+					passiveForces[neighborCell.Location()][neighborCell.Owner] = min(255, force)
+					neighborCell.Strength = 0
 				}
+				neighborCell.Owner = NEUTRAL
 			}
 		}
 	}
-	// apply effects
-	for location, cellEffects := range effect {
+	// results to be applies against all active and passive forces
+	effect := make(map[hlt.Location]map[int]int)
+	// combine passive and active forces
+	for location, activeCellForces := range activeForces {
 		cell := clone.Get(location.X, location.Y)
-		cellOwnerSet := false
-		if cellForces, ok := mapForces[location]; ok {
-			// apply effect to previous owner of the cell
-			if ownerEffect, ok := cellEffects[cell.Owner]; ok {
-				if cell.Strength-ownerEffect > 0 {
-					cell.Strength -= ownerEffect
-				} else {
-					cell.Owner = NEUTRAL
-					cell.Strength = 0
+		fmt.Println("Active Forces At Location: ", cell.Location())
+		if _, ok := effect[location]; !ok {
+			effect[location] = make(map[int]int)
+		}
+		for owner, activeCellForce := range activeCellForces {
+			fmt.Println("  Cell Forces: ", owner, activeCellForce)
+			for _, direction := range hlt.Directions {
+				otherCell := clone.GetCell(cell.Location(), direction)
+				fmt.Println("Other Location: ", direction, otherCell.Location())
+				for otherOwner := range activeForces[otherCell.Location()] {
+					if otherOwner != owner {
+						fmt.Println("    Other Active Cell Forces: ", otherOwner)
+						if _, ok := effect[otherCell.Location()]; !ok {
+							effect[otherCell.Location()] = make(map[int]int)
+						}
+						effect[otherCell.Location()][otherOwner] += activeCellForce
+					}
 				}
-			}
-			// apply effects to forces moving into the cell
-			for owner, force := range cellForces {
-				if ownerEffect, ok := cellEffects[owner]; ok {
-					if force-ownerEffect > 0 {
-						cell.Strength = force - ownerEffect
-						cell.Owner = owner
-						if cellOwnerSet {
-							log("Cell Owner set more than once!")
-						} else {
-							cellOwnerSet = true
+				for otherOwner, otherPassiveCellForce := range passiveForces[otherCell.Location()] {
+					if otherOwner != owner {
+						fmt.Println("    Other Passive Cell Forces: ", otherOwner, otherPassiveCellForce)
+						if _, ok := effect[otherCell.Location()]; !ok {
+							effect[otherCell.Location()] = make(map[int]int)
+						}
+						effect[otherCell.Location()][otherOwner] += activeCellForce
+						if otherOwner != NEUTRAL {
+							effect[cell.Location()][owner] += otherPassiveCellForce
 						}
 					}
 				}
 			}
 		}
 	}
+	// apply effects
+	for location, cellEffects := range effect {
+		fmt.Println("Effects At Location: ", location)
+		cell := clone.Get(location.X, location.Y)
+		for owner, effect := range cellEffects {
+			fmt.Println("  Cell Effect: ", owner, effect)
+			if force, ok := activeForces[location][owner]; ok {
+				fmt.Println("    Active Force: ", force)
+				if force-effect > 0 {
+					cell.Owner = owner
+					cell.Strength = force - effect
+				}
+			}
+			if force, ok := passiveForces[location][owner]; ok {
+				fmt.Println("    Passive Force: ", force)
+				if force-effect > 0 {
+					cell.Owner = owner
+					cell.Strength = force - effect
+				}
+			}
+		}
+	}
+	// Production for cells that didn't move or fight
 	for _, cell := range clone.GetCells(func(cell *Cell) bool {
-		_, ok := fightingLocations[cell.Location()]
+		_, ok := conflictLocations[cell.Location()]
 		return !ok
 	}) {
 		strength := cell.Strength + cell.Production
 		cell.Strength = min(255, strength)
+		fmt.Println("Production!", cell.Location(), cell.Strength)
 	}
 	return clone
 }
