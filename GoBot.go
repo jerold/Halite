@@ -464,7 +464,7 @@ func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 			}
 		}
 	}
-	// results to be applies against all active and passive forces
+	// generate effects caused by all active and passive forces
 	effect := make(map[hlt.Location]map[int]int)
 	// combine passive and active forces
 	for location, activeCellForces := range activeForces {
@@ -499,26 +499,37 @@ func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 	}
 	// apply effects
 	for location, cellEffects := range effect {
-		cell := clone.Get(location.X, location.Y)
 		for owner, effect := range cellEffects {
 			if force, ok := activeForces[location][owner]; ok {
-				if force-effect > 0 {
-					cell.Owner = owner
-					cell.Strength = force - effect
-				}
+				activeForces[location][owner] = max(0, force-effect)
 			}
 			if force, ok := passiveForces[location][owner]; ok {
-				if force-effect > 0 {
-					cell.Owner = owner
-					cell.Strength = force - effect
-				}
+				passiveForces[location][owner] = max(0, force-effect)
+			}
+		}
+	}
+	for location, remainingActiveForces := range activeForces {
+		cell := clone.Get(location.X, location.Y)
+		for owner, remainingForce := range remainingActiveForces {
+			if remainingForce > 0 {
+				cell.Owner = owner
+				cell.Strength = remainingForce
+			}
+		}
+	}
+	for location, remainingPassiveForces := range passiveForces {
+		cell := clone.Get(location.X, location.Y)
+		for owner, remainingForce := range remainingPassiveForces {
+			if remainingForce > 0 {
+				cell.Owner = owner
+				cell.Strength = remainingForce
 			}
 		}
 	}
 	// Production for cells that didn't move or fight
 	for _, cell := range clone.GetCells(func(cell *Cell) bool {
 		_, ok := conflictLocations[cell.Location()]
-		return !ok
+		return !ok && cell.Owner != NEUTRAL
 	}) {
 		strength := cell.Strength + cell.Production
 		cell.Strength = min(255, strength)
