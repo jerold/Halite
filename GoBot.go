@@ -74,6 +74,47 @@ func log(a ...interface{}) {
 	f.Close()
 }
 
+// Test function used to filter or include cells that meet described criteria
+type CellTest func(*Cell) bool
+
+type PointOfInterest struct {
+	X, Y  int
+	Field map[int]map[int]int
+}
+
+// map of strength between destination and each cell in cells
+func NewPOI(destination *Cell, cells *Cells) *PointOfInterest {
+	field := make(map[int]map[int]int)
+	stack := NewStack()
+	for dy := 0; dy < cells.Height; dy++ {
+		yf := cells.Y + dy
+		field[yf] = make(map[int]int)
+		for dx := 0; dx < cells.Width; dx++ {
+			xf := cells.X + dx
+			field[yf][xf] = 999999
+		}
+	}
+	field[destination.Y][destination.X] = destination.Strength
+	stack.Push(destination)
+	for stack.isNotEmpty() {
+		if cell, err := stack.Pop(); err == nil {
+			cost := field[cell.Y][cell.X]
+			for _, neighbor := range cell.Neighbors() {
+				// cost is strength required to take the cell + 1 for turn cost.
+				if field[neighbor.Y][neighbor.X] > cost+neighbor.Strength+1 {
+					field[neighbor.Y][neighbor.X] = cost + neighbor.Strength + 1
+					stack.Push(neighbor)
+				}
+			}
+		}
+	}
+	return &PointOfInterest{
+		X:     destination.X,
+		Y:     destination.Y,
+		Field: field,
+	}
+}
+
 /*
  █████   ██████  ███████ ███    ██ ████████
 ██   ██ ██       ██      ████   ██    ██
@@ -155,9 +196,10 @@ type Boss interface {
 }
 
 type Bot struct {
-	Owner  int
-	Cells  *Cells
-	Agents map[hlt.Location]*Agent
+	Agents           map[hlt.Location]*Agent
+	Owner            int
+	Cells            *Cells
+	PointsOfInterest []*PointOfInterest
 }
 
 /*
@@ -170,9 +212,15 @@ type Bot struct {
 
 func NewBot(owner int, gameMap hlt.GameMap) *Bot {
 	bot := &Bot{
-		Owner:  owner,
-		Cells:  NewCells(0, 0, gameMap.Width, gameMap.Height, gameMap),
-		Agents: make(map[hlt.Location]*Agent),
+		Agents:           make(map[hlt.Location]*Agent),
+		Owner:            owner,
+		Cells:            NewCells(0, 0, gameMap.Width, gameMap.Height, gameMap),
+		PointsOfInterest: make([]*PointOfInterest, 0, 1),
+	}
+	for _, cell := range bot.Cells.GetCells(func(c *Cell) bool {
+		return c.Production == bot.Cells.MaxProduction
+	}) {
+		bot.PointsOfInterest = append(bot.PointsOfInterest, NewPOI(cell, bot.Cells))
 	}
 	return bot
 }
@@ -225,28 +273,58 @@ type Cells struct {
 	Width    int
 	X        int
 	Y        int
-	Adds     map[int][]*Cell
-	Subs     map[int][]*Cell
+	// Ownership changes between turns
+	Adds map[int][]*Cell
+	Subs map[int][]*Cell
+	// Production stats
+	AvgProduction   int
+	MaxProduction   int
+	MinProduction   int
+	TotalProduction map[int]int
+	TotalStrength   map[int]int
+	TotalTerritory  map[int]int
 }
 
 func NewCells(x int, y int, width int, height int, gameMap hlt.GameMap) *Cells {
 	cells := &Cells{
-		Height: height,
-		Width:  width,
-		X:      x,
-		Y:      y,
-		Adds:   make(map[int][]*Cell),
-		Subs:   make(map[int][]*Cell),
+		Height:          height,
+		Width:           width,
+		X:               x,
+		Y:               y,
+		Adds:            make(map[int][]*Cell),
+		Subs:            make(map[int][]*Cell),
+		AvgProduction:   0,
+		MaxProduction:   255,
+		MinProduction:   0,
+		TotalProduction: make(map[int]int),
+		TotalStrength:   make(map[int]int),
+		TotalTerritory:  make(map[int]int),
 	}
 	contents := make(map[int]map[int]*Cell)
+	sum := 0
 	for dy := 0; dy < height; dy++ {
 		yf := y + dy
 		contents[yf] = make(map[int]*Cell)
 		for dx := 0; dx < width; dx++ {
 			xf := x + dx
+			site := gameMap.Contents[yf][xf]
 			contents[yf][xf] = NewCell(cells, gameMap.Contents[yf][xf], xf, yf)
+			cells.TotalProduction[site.Owner] += site.Strength
+			cells.TotalStrength[site.Owner] += site.Strength
+			cells.TotalTerritory[site.Owner]++
+			// update Max
+			if site.Production > cells.MaxProduction {
+				cells.MaxProduction = site.Production
+			}
+			// update Min
+			if site.Production < cells.MinProduction {
+				cells.MinProduction = site.Production
+			}
+			// update Sum for Avg
+			sum += site.Production
 		}
 	}
+	cells.AvgProduction = sum / (width * height)
 	cells.Contents = contents
 	return cells
 }
@@ -254,12 +332,18 @@ func NewCells(x int, y int, width int, height int, gameMap hlt.GameMap) *Cells {
 // Produce a copy of the Cells containing new copies of all contained cells
 func (c *Cells) Clone() *Cells {
 	clone := &Cells{
-		Height: c.Height,
-		Width:  c.Width,
-		X:      c.X,
-		Y:      c.Y,
-		Adds:   make(map[int][]*Cell),
-		Subs:   make(map[int][]*Cell),
+		Height:          c.Height,
+		Width:           c.Width,
+		X:               c.X,
+		Y:               c.Y,
+		Adds:            make(map[int][]*Cell),
+		Subs:            make(map[int][]*Cell),
+		AvgProduction:   c.AvgProduction,
+		MaxProduction:   c.MaxProduction,
+		MinProduction:   c.MinProduction,
+		TotalProduction: c.TotalProduction,
+		TotalStrength:   c.TotalStrength,
+		TotalTerritory:  c.TotalTerritory,
 	}
 	contents := make(map[int]map[int]*Cell)
 	for dy := 0; dy < c.Height; dy++ {
@@ -294,17 +378,21 @@ func (c *Cells) Clone() *Cells {
 func (c *Cells) Update(gameMap hlt.GameMap) {
 	c.Adds = make(map[int][]*Cell)
 	c.Subs = make(map[int][]*Cell)
+	c.TotalProduction = make(map[int]int)
+	c.TotalStrength = make(map[int]int)
+	c.TotalTerritory = make(map[int]int)
 	for y := 0; y < c.Height; y++ {
 		for x := 0; x < c.Width; x++ {
-			// TODO: update Cells.Adds/Subs if owners changed to optimize adding Agents
+			site := gameMap.Contents[y][x]
+			c.TotalProduction[site.Owner] += site.Strength
+			c.TotalStrength[site.Owner] += site.Strength
+			c.TotalTerritory[site.Owner]++
 			cell := c.Get(x, y)
-			oldOwner := cell.Owner
-			cell.Update(gameMap)
-			newOwner := cell.Owner
-			if newOwner != oldOwner {
-				c.Adds[newOwner] = append(c.Adds[newOwner], cell)
-				c.Adds[oldOwner] = append(c.Subs[oldOwner], cell)
+			if cell.Owner != site.Owner {
+				c.Adds[site.Owner] = append(c.Adds[site.Owner], cell)
+				c.Subs[cell.Owner] = append(c.Subs[cell.Owner], cell)
 			}
+			cell.Update(site)
 		}
 	}
 }
@@ -324,25 +412,25 @@ func (c *Cells) GetLocation(location hlt.Location, direction hlt.Direction) hlt.
 		if loc.Y == 0 {
 			loc.Y = c.Height - 1
 		} else {
-			loc.Y -= 1
+			loc.Y--
 		}
 	case hlt.EAST:
 		if loc.X == c.Width-1 {
 			loc.X = 0
 		} else {
-			loc.X += 1
+			loc.X++
 		}
 	case hlt.SOUTH:
 		if loc.Y == c.Height-1 {
 			loc.Y = 0
 		} else {
-			loc.Y += 1
+			loc.Y++
 		}
 	case hlt.WEST:
 		if loc.X == 0 {
 			loc.X = c.Width - 1
 		} else {
-			loc.X -= 1
+			loc.X--
 		}
 	}
 	return hlt.Location{
@@ -354,6 +442,20 @@ func (c *Cells) GetLocation(location hlt.Location, direction hlt.Direction) hlt.
 func (c *Cells) GetCell(location hlt.Location, direction hlt.Direction) *Cell {
 	loc := c.GetLocation(location, direction)
 	return c.Contents[loc.Y][loc.X]
+}
+
+func (c *Cells) GetCells(cellTest CellTest) []*Cell {
+	results := make([]*Cell, 0)
+	for dy := 0; dy < c.Height; dy++ {
+		yf := c.Y + dy
+		for dx := 0; dx < c.Width; dx++ {
+			xf := c.X + dx
+			if cellTest(c.Contents[yf][xf]) {
+				results = append(results, c.Contents[yf][xf])
+			}
+		}
+	}
+	return results
 }
 
 func (c *Cells) Get(x int, y int) *Cell {
@@ -404,8 +506,7 @@ func (c *Cell) Clone(cells *Cells) *Cell {
 	}
 }
 
-func (c *Cell) Update(gameMap hlt.GameMap) {
-	site := gameMap.GetSite(c.Location(), hlt.STILL)
+func (c *Cell) Update(site hlt.Site) {
 	c.Owner = site.Owner
 	c.Strength = site.Strength
 	c._CalcDone = false
