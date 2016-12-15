@@ -469,18 +469,14 @@ func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 	// combine passive and active forces
 	for location, activeCellForces := range activeForces {
 		cell := clone.Get(location.X, location.Y)
-		fmt.Println("Active Forces At Location: ", cell.Location())
 		if _, ok := effect[location]; !ok {
 			effect[location] = make(map[int]int)
 		}
 		for owner, activeCellForce := range activeCellForces {
-			fmt.Println("  Cell Forces: ", owner, activeCellForce)
 			for _, direction := range hlt.Directions {
 				otherCell := clone.GetCell(cell.Location(), direction)
-				fmt.Println("Other Location: ", direction, otherCell.Location())
 				for otherOwner := range activeForces[otherCell.Location()] {
 					if otherOwner != owner {
-						fmt.Println("    Other Active Cell Forces: ", otherOwner)
 						if _, ok := effect[otherCell.Location()]; !ok {
 							effect[otherCell.Location()] = make(map[int]int)
 						}
@@ -489,7 +485,6 @@ func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 				}
 				for otherOwner, otherPassiveCellForce := range passiveForces[otherCell.Location()] {
 					if otherOwner != owner {
-						fmt.Println("    Other Passive Cell Forces: ", otherOwner, otherPassiveCellForce)
 						if _, ok := effect[otherCell.Location()]; !ok {
 							effect[otherCell.Location()] = make(map[int]int)
 						}
@@ -504,19 +499,15 @@ func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 	}
 	// apply effects
 	for location, cellEffects := range effect {
-		fmt.Println("Effects At Location: ", location)
 		cell := clone.Get(location.X, location.Y)
 		for owner, effect := range cellEffects {
-			fmt.Println("  Cell Effect: ", owner, effect)
 			if force, ok := activeForces[location][owner]; ok {
-				fmt.Println("    Active Force: ", force)
 				if force-effect > 0 {
 					cell.Owner = owner
 					cell.Strength = force - effect
 				}
 			}
 			if force, ok := passiveForces[location][owner]; ok {
-				fmt.Println("    Passive Force: ", force)
 				if force-effect > 0 {
 					cell.Owner = owner
 					cell.Strength = force - effect
@@ -531,7 +522,6 @@ func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 	}) {
 		strength := cell.Strength + cell.Production
 		cell.Strength = min(255, strength)
-		fmt.Println("Production!", cell.Location(), cell.Strength)
 	}
 	return clone
 }
