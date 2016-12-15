@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"hlt"
@@ -10,6 +11,21 @@ import (
 )
 
 const logFile = "goLog.txt"
+const NEUTRAL = 0
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
 
 /*
 ███████ ████████  █████   ██████ ██   ██
@@ -398,8 +414,100 @@ func (c *Cells) Update(gameMap hlt.GameMap) {
 }
 
 // applies moves in the same way halite.io would... I think.
-func (c *Cells) Simulate(hlt.MoveSet) {
-
+func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
+	clone := c.Clone()
+	// used to prevent production on cells that had movement this round
+	fightingLocations := make(map[hlt.Location]bool)
+	mapForces := make(map[hlt.Location]map[int]int)
+	effect := make(map[hlt.Location]map[int]int)
+	// forces moving into new cells
+	for _, move := range moves {
+		if move.Direction != hlt.STILL {
+			fromCell := clone.Get(move.Location.X, move.Location.Y)
+			toCell := clone.GetCell(move.Location, move.Direction)
+			fightingLocations[fromCell.Location()] = true
+			fightingLocations[toCell.Location()] = true
+			if _, ok := mapForces[toCell.Location()]; !ok {
+				mapForces[toCell.Location()] = make(map[int]int)
+			}
+			force := mapForces[toCell.Location()][fromCell.Owner] + fromCell.Strength
+			// combine strength from one owner coming from multiple cells to a max of 255
+			mapForces[toCell.Location()][fromCell.Owner] = min(255, force)
+			fromCell.Strength = 0
+		}
+	}
+	// apply damage for each force moved to each opposing strength
+	for location, cellForces := range mapForces {
+		cell := clone.Get(location.X, location.Y)
+		if _, ok := effect[location]; !ok {
+			effect[location] = make(map[int]int)
+		}
+		for owner, force := range cellForces {
+			// take on previous cell owner's strength
+			if cell.Owner != owner {
+				effect[location][cell.Owner] += force
+			}
+			// damage other forces moving into this cell
+			for otherOwner := range cellForces {
+				// cell Owner effect already accounted for
+				if otherOwner != owner && otherOwner != cell.Owner {
+					effect[location][otherOwner] += force
+				}
+			}
+			// Overkill from cardinals only for non neutral strengths
+			for _, direction := range hlt.CARDINALS {
+				neighborCell := c.GetCell(location, direction)
+				if owner != neighborCell.Owner && neighborCell.Owner != NEUTRAL {
+					fightingLocations[neighborCell.Location()] = true
+					// take on neighbor strength
+					if _, ok := effect[neighborCell.Location()]; !ok {
+						effect[neighborCell.Location()] = make(map[int]int)
+					}
+					effect[neighborCell.Location()][neighborCell.Owner] += force
+					// neighbor takes its turn out on force
+					effect[location][owner] += neighborCell.Strength
+				}
+			}
+		}
+	}
+	// apply effects
+	for location, cellEffects := range effect {
+		cell := clone.Get(location.X, location.Y)
+		cellOwnerSet := false
+		if cellForces, ok := mapForces[location]; ok {
+			// apply effect to previous owner of the cell
+			if ownerEffect, ok := cellEffects[cell.Owner]; ok {
+				if cell.Strength-ownerEffect > 0 {
+					cell.Strength -= ownerEffect
+				} else {
+					cell.Owner = NEUTRAL
+					cell.Strength = 0
+				}
+			}
+			// apply effects to forces moving into the cell
+			for owner, force := range cellForces {
+				if ownerEffect, ok := cellEffects[owner]; ok {
+					if force-ownerEffect > 0 {
+						cell.Strength = force - ownerEffect
+						cell.Owner = owner
+						if cellOwnerSet {
+							log("Cell Owner set more than once!")
+						} else {
+							cellOwnerSet = true
+						}
+					}
+				}
+			}
+		}
+	}
+	for _, cell := range clone.GetCells(func(cell *Cell) bool {
+		_, ok := fightingLocations[cell.Location()]
+		return !ok
+	}) {
+		strength := cell.Strength + cell.Production
+		cell.Strength = min(255, strength)
+	}
+	return clone
 }
 
 func (c *Cells) GetLocation(location hlt.Location, direction hlt.Direction) hlt.Location {
@@ -460,6 +568,20 @@ func (c *Cells) GetCells(cellTest CellTest) []*Cell {
 
 func (c *Cells) Get(x int, y int) *Cell {
 	return c.Contents[y][x]
+}
+
+func (c *Cells) String() string {
+	var buffer bytes.Buffer
+	buffer.WriteString(fmt.Sprintf("Cells(x:%d, y:%d, w:%d, h:%d)\n", c.X, c.Y, c.Width, c.Height))
+	for dy := 0; dy < c.Height; dy++ {
+		yf := c.Y + dy
+		for dx := 0; dx < c.Width; dx++ {
+			xf := c.X + dx
+			buffer.WriteString(fmt.Sprintf("%v, ", c.Contents[yf][xf].String()))
+		}
+		buffer.WriteString("\n")
+	}
+	return buffer.String()
 }
 
 /*
@@ -576,6 +698,10 @@ func (c *Cell) Calc() {
 	}
 	c._Border = border
 	c._Damage = damage
+}
+
+func (c *Cell) String() string {
+	return fmt.Sprintf("[%d, %3d, %3d]", c.Owner, c.Production, c.Strength)
 }
 
 /*
