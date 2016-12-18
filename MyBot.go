@@ -104,6 +104,7 @@ type CellTest func(*Cell) bool
 
 // PointOfInterest is a location and a map of strength costs to that location
 type PointOfInterest struct {
+	Cells *Cells
 	X, Y  int
 	Field map[int]map[int]int
 }
@@ -135,10 +136,25 @@ func NewPOI(destination *Cell, cells *Cells) *PointOfInterest {
 		}
 	}
 	return &PointOfInterest{
+		Cells: cells,
 		X:     destination.X,
 		Y:     destination.Y,
 		Field: field,
 	}
+}
+
+// String convert the Cells into a string
+func (p *PointOfInterest) String() string {
+	var buffer bytes.Buffer
+	for y := p.Cells.Y; y < p.Cells.Y+p.Cells.Height; y++ {
+		yf := y % p.Cells._sourceHeight
+		for x := p.Cells.X; x < p.Cells.X+p.Cells.Width; x++ {
+			xf := x % p.Cells._sourceWidth
+			buffer.WriteString(fmt.Sprintf("%v, ", p.Field[yf][xf]))
+		}
+		buffer.WriteString("\n")
+	}
+	return buffer.String()
 }
 
 /*
@@ -269,6 +285,7 @@ func (b *Bot) Update(gameMap hlt.GameMap) {
 			newAgents[location] = agent
 		}
 	}
+	log("Agents:", len(newAgents))
 	b.Agents = newAgents
 }
 
@@ -760,6 +777,10 @@ func (c *Cell) String() string {
 func main() {
 	conn, gameMap := hlt.NewConnection("BrevBot")
 	bot := NewBot(conn.PlayerTag, gameMap)
+	for i, poi := range bot.PointsOfInterest {
+		log("Point of Interest:", i)
+		log(poi.String())
+	}
 	turn := 0
 	for {
 		turn++
@@ -769,7 +790,7 @@ func main() {
 		startTime := time.Now()
 		bot.Update(gameMap)
 		moves = bot.Moves()
-		log(fmt.Sprintf("Time: %v\n", time.Now().Sub(startTime)))
+		log(fmt.Sprintf("Time: %v", time.Now().Sub(startTime)))
 
 		conn.SendFrame(moves)
 	}
