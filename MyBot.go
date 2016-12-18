@@ -6,11 +6,10 @@ import (
 	"fmt"
 	"hlt"
 	"os"
-	"sync"
 	"time"
 )
 
-const logFile = "goLog.txt"
+const logFile = "log.txt"
 const NEUTRAL = 0
 
 func max(a, b int) int {
@@ -35,42 +34,47 @@ func min(a, b int) int {
 ███████    ██    ██   ██  ██████ ██   ██
 */
 
+type Stackable struct {
+	Content  *Cell
+	Previous *Stackable
+}
+
 type Stack struct {
-	lock sync.Mutex // you don't have to do this if you don't want thread safety
-	s    []*Cell
+	_top    *Stackable
+	_length int
 }
 
 func NewStack() *Stack {
-	return &Stack{sync.Mutex{}, make([]*Cell, 0)}
+	return &Stack{_length: 0}
 }
 
-func (s *Stack) Push(v *Cell) {
-	// s.lock.Lock()
-	// defer s.lock.Unlock()
+func (s *Stack) Peek() (*Cell, error) {
+	if s.isEmpty() {
+		return nil, errors.New("Empty Stack")
+	}
+	return s._top.Content, nil
+}
 
-	s.s = append(s.s, v)
+func (s *Stack) Push(c *Cell) {
+	newTop := &Stackable{Content: c, Previous: s._top}
+	s._top = newTop
+	s._length++
 }
 
 func (s *Stack) Pop() (*Cell, error) {
-	// s.lock.Lock()
-	// defer s.lock.Unlock()
-
-	l := len(s.s)
-	if l == 0 {
+	if s.isEmpty() {
 		return nil, errors.New("Empty Stack")
 	}
-
-	res := s.s[l-1]
-	s.s = s.s[:l-1]
-	return res, nil
-}
-
-func (s *Stack) length() int {
-	return len(s.s)
+	popStackable := s._top
+	cell := popStackable.Content
+	s._top = popStackable.Previous
+	popStackable.Previous = nil
+	s._length--
+	return cell, nil
 }
 
 func (s *Stack) isEmpty() bool {
-	return len(s.s) == 0
+	return s._length == 0
 }
 
 func (s *Stack) isNotEmpty() bool {
@@ -102,11 +106,11 @@ type PointOfInterest struct {
 func NewPOI(destination *Cell, cells *Cells) *PointOfInterest {
 	field := make(map[int]map[int]int)
 	stack := NewStack()
-	for dy := 0; dy < cells.Height; dy++ {
-		yf := cells.Y + dy
+	for y := cells.Y; y < cells.Y+cells.Height; y++ {
+		yf := y % cells._sourceHeight
 		field[yf] = make(map[int]int)
-		for dx := 0; dx < cells.Width; dx++ {
-			xf := cells.X + dx
+		for x := cells.X; x < cells.X+cells.Width; x++ {
+			xf := x % cells._sourceWidth
 			field[yf][xf] = 999999
 		}
 	}
@@ -144,22 +148,30 @@ type AgentState int
 const (
 	Assisting    AgentState = iota // recruited to assist another Agent
 	Attacking                      // on Boundry, advancing into enemy territory
-	Dead                           // Agent died in the last turn
 	Expanding                      // on Boundry, tasked with capturing new territory
+	Farming                        // waiting to harvest strength from this site
 	Initializing                   // new Agent hasn't decided what to do yet
 	Transporting                   // within Body, moving strength to edge
 )
 
+type DestinationType int
+
+const (
+	Enemy DestinationType = iota
+	Friendly
+	Plunder
+)
+
 type Agent struct {
-	Boss     Boss       // Get Owner and other Agents
+	Bot      Bot        // Get Owner and other Agents
 	State    AgentState // What has the Agent done with its life
 	LastMove hlt.Move
 	Location hlt.Location
 }
 
-func NewAgent(boss Boss, location hlt.Location) *Agent {
+func NewAgent(bot Bot, location hlt.Location) *Agent {
 	return &Agent{
-		Boss:     boss,
+		Bot:      bot,
 		State:    Initializing,
 		LastMove: hlt.Move{Location: location, Direction: hlt.STILL},
 		Location: location,
@@ -173,11 +185,11 @@ func (a *Agent) Update() hlt.Location {
 }
 
 func (a *Agent) GetAgents() map[hlt.Location]*Agent {
-	return a.Boss.GetAgents()
+	return a.Bot.Agents
 }
 
 func (a *Agent) GetOwner() int {
-	return a.Boss.GetOwner()
+	return a.Bot.Owner
 }
 
 func (a *Agent) GetCell() *Cell {
@@ -185,7 +197,7 @@ func (a *Agent) GetCell() *Cell {
 }
 
 func (a *Agent) GetCells() *Cells {
-	return a.Boss.GetCells()
+	return a.Bot.Cells
 }
 
 func (a *Agent) GetMove() hlt.Move {
@@ -198,18 +210,12 @@ func (a *Agent) GetMove() hlt.Move {
 }
 
 /*
-██████   ██████  ███████ ███████
-██   ██ ██    ██ ██      ██
-██████  ██    ██ ███████ ███████
-██   ██ ██    ██      ██      ██
-██████   ██████  ███████ ███████
+██████   ██████  ████████
+██   ██ ██    ██    ██
+██████  ██    ██    ██
+██   ██ ██    ██    ██
+██████   ██████     ██
 */
-
-type Boss interface {
-	GetAgents() map[hlt.Location]*Agent
-	GetCells() *Cells
-	GetOwner() int
-}
 
 type Bot struct {
 	Agents           map[hlt.Location]*Agent
@@ -217,14 +223,6 @@ type Bot struct {
 	Cells            *Cells
 	PointsOfInterest []*PointOfInterest
 }
-
-/*
-██████   ██████  ████████
-██   ██ ██    ██    ██
-██████  ██    ██    ██
-██   ██ ██    ██    ██
-██████   ██████     ██
-*/
 
 func NewBot(owner int, gameMap hlt.GameMap) *Bot {
 	bot := &Bot{
@@ -243,28 +241,13 @@ func NewBot(owner int, gameMap hlt.GameMap) *Bot {
 
 func (b *Bot) Update(gameMap hlt.GameMap) {
 	b.Cells.Update(gameMap)
-	// Update Agents
-
+	// Update Current Agents
 	newAgents := make(map[hlt.Location]*Agent)
 	for _, agent := range b.Agents {
 		updatedAgentLocation := agent.Update()
-		if agent.State != Dead {
-			newAgents[updatedAgentLocation] = agent
-		}
+		newAgents[updatedAgentLocation] = agent
 	}
 	b.Agents = newAgents
-}
-
-func (b *Bot) GetAgents() map[hlt.Location]*Agent {
-	return b.Agents
-}
-
-func (b *Bot) GetCells() *Cells {
-	return b.Cells
-}
-
-func (b *Bot) GetOwner() int {
-	return b.Owner
 }
 
 func (b *Bot) Moves() hlt.MoveSet {
@@ -289,9 +272,11 @@ type Cells struct {
 	Width    int
 	X        int
 	Y        int
+	// Original map dimensions
+	_sourceHeight int
+	_sourceWidth  int
 	// Ownership changes between turns
-	Adds map[int][]*Cell
-	Subs map[int][]*Cell
+	ByOwner map[int][]*Cell
 	// Production stats
 	AvgProduction   int
 	MaxProduction   int
@@ -307,8 +292,9 @@ func NewCells(x int, y int, width int, height int, gameMap hlt.GameMap) *Cells {
 		Width:           width,
 		X:               x,
 		Y:               y,
-		Adds:            make(map[int][]*Cell),
-		Subs:            make(map[int][]*Cell),
+		_sourceHeight:   gameMap.Height,
+		_sourceWidth:    gameMap.Width,
+		ByOwner:         make(map[int][]*Cell),
 		AvgProduction:   0,
 		MaxProduction:   255,
 		MinProduction:   0,
@@ -318,13 +304,14 @@ func NewCells(x int, y int, width int, height int, gameMap hlt.GameMap) *Cells {
 	}
 	contents := make(map[int]map[int]*Cell)
 	sum := 0
-	for dy := 0; dy < height; dy++ {
-		yf := y + dy
+	for i := y; i < y+height; i++ {
+		yf := i % cells._sourceHeight
 		contents[yf] = make(map[int]*Cell)
-		for dx := 0; dx < width; dx++ {
-			xf := x + dx
+		for j := x; j < x+width; j++ {
+			xf := j % cells._sourceWidth
 			site := gameMap.Contents[yf][xf]
 			contents[yf][xf] = NewCell(cells, gameMap.Contents[yf][xf], xf, yf)
+			cells.ByOwner[site.Owner] = append(cells.ByOwner[site.Owner], contents[yf][xf])
 			cells.TotalProduction[site.Owner] += site.Strength
 			cells.TotalStrength[site.Owner] += site.Strength
 			cells.TotalTerritory[site.Owner]++
@@ -352,8 +339,9 @@ func (c *Cells) Clone() *Cells {
 		Width:           c.Width,
 		X:               c.X,
 		Y:               c.Y,
-		Adds:            make(map[int][]*Cell),
-		Subs:            make(map[int][]*Cell),
+		_sourceHeight:   c._sourceHeight,
+		_sourceWidth:    c._sourceWidth,
+		ByOwner:         make(map[int][]*Cell),
 		AvgProduction:   c.AvgProduction,
 		MaxProduction:   c.MaxProduction,
 		MinProduction:   c.MinProduction,
@@ -362,53 +350,38 @@ func (c *Cells) Clone() *Cells {
 		TotalTerritory:  c.TotalTerritory,
 	}
 	contents := make(map[int]map[int]*Cell)
-	for dy := 0; dy < c.Height; dy++ {
-		yf := c.Y + dy
+	for y := c.Y; y < c.Y+c.Height; y++ {
+		yf := y % c._sourceHeight
 		contents[yf] = make(map[int]*Cell)
-		for dx := 0; dx < c.Width; dx++ {
-			xf := c.X + dx
-			contents[yf][xf] = c.Contents[yf][xf].Clone(clone)
+		for x := c.X; x < c.X+c.Width; x++ {
+			xf := x % c._sourceWidth
+			cell := c.Contents[yf][xf].Clone(clone)
+			contents[yf][xf] = cell
+			clone.ByOwner[cell.Owner] = append(clone.ByOwner[cell.Owner], cell)
 		}
 	}
 	clone.Contents = contents
-	for owner, cells := range c.Adds {
-		adds := make([]*Cell, 0, len(c.Adds[owner]))
-		for _, cell := range cells {
-			loc := cell.Location()
-			adds = append(adds, contents[loc.Y][loc.X])
-		}
-		clone.Adds[owner] = adds
-	}
-	for owner, cells := range c.Subs {
-		subs := make([]*Cell, 0, len(c.Subs[owner]))
-		for _, cell := range cells {
-			loc := cell.Location()
-			subs = append(subs, contents[loc.Y][loc.X])
-		}
-		clone.Subs[owner] = subs
-	}
 	return clone
 }
 
 // update Cells with Site data from provided GameMap
 func (c *Cells) Update(gameMap hlt.GameMap) {
-	c.Adds = make(map[int][]*Cell)
-	c.Subs = make(map[int][]*Cell)
 	c.TotalProduction = make(map[int]int)
 	c.TotalStrength = make(map[int]int)
 	c.TotalTerritory = make(map[int]int)
-	for y := 0; y < c.Height; y++ {
-		for x := 0; x < c.Width; x++ {
-			site := gameMap.Contents[y][x]
+	c.ByOwner = make(map[int][]*Cell)
+	// Cells my not be the full size of gameMap, only iterate Cells contents
+	for y := c.Y; y < c.Y+c.Height; y++ {
+		yf := y % c._sourceHeight
+		for x := c.X; x < c.X+c.Width; x++ {
+			xf := x % c._sourceWidth
+			site := gameMap.Contents[yf][xf]
 			c.TotalProduction[site.Owner] += site.Strength
 			c.TotalStrength[site.Owner] += site.Strength
 			c.TotalTerritory[site.Owner]++
-			cell := c.Get(x, y)
-			if cell.Owner != site.Owner {
-				c.Adds[site.Owner] = append(c.Adds[site.Owner], cell)
-				c.Subs[cell.Owner] = append(c.Subs[cell.Owner], cell)
-			}
+			cell := c.Get(xf, yf)
 			cell.Update(site)
+			c.ByOwner[cell.Owner] = append(c.ByOwner[cell.Owner], cell)
 		}
 	}
 }
@@ -434,7 +407,7 @@ func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 			force := activeForces[toCell.Location()][fromCell.Owner] + fromCell.Strength
 			// combine strength from one owner coming from multiple cells to a max of 255
 			activeForces[toCell.Location()][fromCell.Owner] = min(255, force)
-			fromCell.Owner = NEUTRAL
+			// fromCell.Owner = NEUTRAL
 			fromCell.Strength = 0
 		}
 	}
@@ -460,7 +433,7 @@ func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 					passiveForces[neighborCell.Location()][neighborCell.Owner] = min(255, force)
 					neighborCell.Strength = 0
 				}
-				neighborCell.Owner = NEUTRAL
+				// neighborCell.Owner = NEUTRAL
 			}
 		}
 	}
@@ -481,6 +454,8 @@ func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 							effect[otherCell.Location()] = make(map[int]int)
 						}
 						effect[otherCell.Location()][otherOwner] += activeCellForce
+						// Cell was in conflict, it is possible there will not be an owner here following combat
+						otherCell.Owner = NEUTRAL
 					}
 				}
 				for otherOwner, otherPassiveCellForce := range passiveForces[otherCell.Location()] {
@@ -492,6 +467,8 @@ func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 						if otherOwner != NEUTRAL {
 							effect[cell.Location()][owner] += otherPassiveCellForce
 						}
+						// Cell was in conflict, it is possible there will not be an owner here following combat
+						otherCell.Owner = NEUTRAL
 					}
 				}
 			}
@@ -537,41 +514,39 @@ func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 	return clone
 }
 
+func (c *Cells) InBounds(location hlt.Location) bool {
+	_, ok := c.Contents[location.X][location.X]
+	return ok
+}
+
 func (c *Cells) GetLocation(location hlt.Location, direction hlt.Direction) hlt.Location {
-	loc := hlt.Location{
-		X: location.X - c.X,
-		Y: location.Y - c.Y,
-	}
 	switch direction {
 	case hlt.NORTH:
-		if loc.Y == 0 {
-			loc.Y = c.Height - 1
+		if location.Y == 0 {
+			location.Y = c._sourceHeight - 1
 		} else {
-			loc.Y--
+			location.Y--
 		}
 	case hlt.EAST:
-		if loc.X == c.Width-1 {
-			loc.X = 0
+		if location.X == c._sourceWidth-1 {
+			location.X = 0
 		} else {
-			loc.X++
+			location.X++
 		}
 	case hlt.SOUTH:
-		if loc.Y == c.Height-1 {
-			loc.Y = 0
+		if location.Y == c._sourceHeight-1 {
+			location.Y = 0
 		} else {
-			loc.Y++
+			location.Y++
 		}
 	case hlt.WEST:
-		if loc.X == 0 {
-			loc.X = c.Width - 1
+		if location.X == 0 {
+			location.X = c._sourceWidth - 1
 		} else {
-			loc.X--
+			location.X--
 		}
 	}
-	return hlt.Location{
-		X: loc.X + c.X,
-		Y: loc.Y + c.Y,
-	}
+	return location
 }
 
 func (c *Cells) GetCell(location hlt.Location, direction hlt.Direction) *Cell {
@@ -581,12 +556,13 @@ func (c *Cells) GetCell(location hlt.Location, direction hlt.Direction) *Cell {
 
 func (c *Cells) GetCells(cellTest CellTest) []*Cell {
 	results := make([]*Cell, 0)
-	for dy := 0; dy < c.Height; dy++ {
-		yf := c.Y + dy
-		for dx := 0; dx < c.Width; dx++ {
-			xf := c.X + dx
-			if cellTest(c.Contents[yf][xf]) {
-				results = append(results, c.Contents[yf][xf])
+	for y := c.Y; y < c.Y+c.Height; y++ {
+		yf := y % c._sourceHeight
+		for x := c.X; x < c.X+c.Width; x++ {
+			xf := x % c._sourceWidth
+			cell := c.Get(yf, xf)
+			if cellTest(cell) {
+				results = append(results, cell)
 			}
 		}
 	}
@@ -600,10 +576,10 @@ func (c *Cells) Get(x int, y int) *Cell {
 func (c *Cells) String() string {
 	var buffer bytes.Buffer
 	buffer.WriteString(fmt.Sprintf("Cells(x:%d, y:%d, w:%d, h:%d)\n", c.X, c.Y, c.Width, c.Height))
-	for dy := 0; dy < c.Height; dy++ {
-		yf := c.Y + dy
-		for dx := 0; dx < c.Width; dx++ {
-			xf := c.X + dx
+	for y := c.Y; y < c.Y+c.Height; y++ {
+		yf := y % c._sourceHeight
+		for x := c.X; x < c.X+c.Width; x++ {
+			xf := x % c._sourceWidth
 			buffer.WriteString(fmt.Sprintf("%v, ", c.Contents[yf][xf].String()))
 		}
 		buffer.WriteString("\n")
@@ -657,6 +633,7 @@ func (c *Cell) Clone(cells *Cells) *Cell {
 
 func (c *Cell) Update(site hlt.Site) {
 	c.Owner = site.Owner
+	c.Production = site.Production
 	c.Strength = site.Strength
 	c._CalcDone = false
 }
@@ -728,7 +705,7 @@ func (c *Cell) Calc() {
 }
 
 func (c *Cell) String() string {
-	return fmt.Sprintf("[%d, %3d, %3d]", c.Owner, c.Production, c.Strength)
+	return fmt.Sprintf("(x:%d, y:%d)[o:%d, p:%d, s:%d]", c.X, c.Y, c.Owner, c.Production, c.Strength)
 }
 
 /*
