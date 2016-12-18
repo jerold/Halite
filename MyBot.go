@@ -10,7 +10,7 @@ import (
 )
 
 const logFile = "log.txt"
-const NEUTRAL = 0
+const unowned = 0
 
 func max(a, b int) int {
 	if a > b {
@@ -34,20 +34,23 @@ func min(a, b int) int {
 ███████    ██    ██   ██  ██████ ██   ██
 */
 
-type Stackable struct {
+type stackable struct {
 	Content  *Cell
-	Previous *Stackable
+	Previous *stackable
 }
 
+// Stack is a FILO collection
 type Stack struct {
-	_top    *Stackable
+	_top    *stackable
 	_length int
 }
 
+// NewStack is a constructor
 func NewStack() *Stack {
 	return &Stack{_length: 0}
 }
 
+// Peek at top item
 func (s *Stack) Peek() (*Cell, error) {
 	if s.isEmpty() {
 		return nil, errors.New("Empty Stack")
@@ -55,20 +58,22 @@ func (s *Stack) Peek() (*Cell, error) {
 	return s._top.Content, nil
 }
 
+// Push new item into the Stack
 func (s *Stack) Push(c *Cell) {
-	newTop := &Stackable{Content: c, Previous: s._top}
+	newTop := &stackable{Content: c, Previous: s._top}
 	s._top = newTop
 	s._length++
 }
 
+// Pop the top item off of the stack
 func (s *Stack) Pop() (*Cell, error) {
 	if s.isEmpty() {
 		return nil, errors.New("Empty Stack")
 	}
-	popStackable := s._top
-	cell := popStackable.Content
-	s._top = popStackable.Previous
-	popStackable.Previous = nil
+	pop := s._top
+	cell := pop.Content
+	s._top = pop.Previous
+	pop.Previous = nil
 	s._length--
 	return cell, nil
 }
@@ -94,15 +99,16 @@ func log(a ...interface{}) {
 	f.Close()
 }
 
-// Test function used to filter or include cells that meet described criteria
+// CellTest is a function used to filter or include cells that meet described criteria
 type CellTest func(*Cell) bool
 
+// PointOfInterest is a location and a map of strength costs to that location
 type PointOfInterest struct {
 	X, Y  int
 	Field map[int]map[int]int
 }
 
-// map of strength between destination and each cell in cells
+// NewPOI is a constructor
 func NewPOI(destination *Cell, cells *Cells) *PointOfInterest {
 	field := make(map[int]map[int]int)
 	stack := NewStack()
@@ -143,33 +149,46 @@ func NewPOI(destination *Cell, cells *Cells) *PointOfInterest {
 ██   ██  ██████  ███████ ██   ████    ██
 */
 
+// AgentState is a state Agents can be in
 type AgentState int
 
 const (
-	Assisting    AgentState = iota // recruited to assist another Agent
-	Attacking                      // on Boundry, advancing into enemy territory
-	Expanding                      // on Boundry, tasked with capturing new territory
-	Farming                        // waiting to harvest strength from this site
-	Initializing                   // new Agent hasn't decided what to do yet
-	Transporting                   // within Body, moving strength to edge
+	// Assisting recruited to assist another Agent
+	Assisting AgentState = iota
+	// Attacking on Boundry, advancing into enemy territory
+	Attacking
+	// Expanding on Boundry, tasked with capturing new territory
+	Expanding
+	// Farming waiting to harvest strength from this site
+	Farming
+	// Initializing new Agent hasn't decided what to do yet
+	Initializing
+	// Transporting is within Body, moving strength to edge
+	Transporting
 )
 
+// DestinationType is the type of destination the Agent is heading towards
 type DestinationType int
 
 const (
+	// Enemy type destination
 	Enemy DestinationType = iota
+	// Friendly type destination
 	Friendly
+	// Plunder type destination
 	Plunder
 )
 
+// Agent manages strength as it moves across the gameMap
 type Agent struct {
-	Bot      Bot        // Get Owner and other Agents
+	Bot      *Bot       // Get Owner and other Agents
 	State    AgentState // What has the Agent done with its life
 	LastMove hlt.Move
 	Location hlt.Location
 }
 
-func NewAgent(bot Bot, location hlt.Location) *Agent {
+// NewAgent is a constructor
+func NewAgent(bot *Bot, location hlt.Location) *Agent {
 	return &Agent{
 		Bot:      bot,
 		State:    Initializing,
@@ -178,28 +197,18 @@ func NewAgent(bot Bot, location hlt.Location) *Agent {
 	}
 }
 
-// called at beginning of a new turn. Update current location based on last turn.
+// Update is called at beginning of a new turn. Update current location based on last turn
 func (a *Agent) Update() hlt.Location {
-	a.Location = a.GetCells().GetLocation(a.LastMove.Location, a.LastMove.Direction)
+	a.Location = a.Bot.Cells.GetLocation(a.LastMove.Location, a.LastMove.Direction)
 	return a.Location
 }
 
-func (a *Agent) GetAgents() map[hlt.Location]*Agent {
-	return a.Bot.Agents
-}
-
-func (a *Agent) GetOwner() int {
-	return a.Bot.Owner
-}
-
+// GetCell is for getting the the cell for this Agent
 func (a *Agent) GetCell() *Cell {
-	return a.GetCells().GetCell(a.Location, hlt.STILL)
+	return a.Bot.Cells.GetCell(a.Location, hlt.STILL)
 }
 
-func (a *Agent) GetCells() *Cells {
-	return a.Bot.Cells
-}
-
+// GetMove produces the Agent's next move
 func (a *Agent) GetMove() hlt.Move {
 	nextMove := hlt.Move{
 		Location:  a.Location,
@@ -217,6 +226,7 @@ func (a *Agent) GetMove() hlt.Move {
 ██████   ██████     ██
 */
 
+// Bot is in control of Agents for all owned cells.
 type Bot struct {
 	Agents           map[hlt.Location]*Agent
 	Owner            int
@@ -224,6 +234,7 @@ type Bot struct {
 	PointsOfInterest []*PointOfInterest
 }
 
+// NewBot is a constructor
 func NewBot(owner int, gameMap hlt.GameMap) *Bot {
 	bot := &Bot{
 		Agents:           make(map[hlt.Location]*Agent),
@@ -239,17 +250,29 @@ func NewBot(owner int, gameMap hlt.GameMap) *Bot {
 	return bot
 }
 
+// Update takes in new map data and updates agents following a turn
 func (b *Bot) Update(gameMap hlt.GameMap) {
 	b.Cells.Update(gameMap)
 	// Update Current Agents
 	newAgents := make(map[hlt.Location]*Agent)
 	for _, agent := range b.Agents {
-		updatedAgentLocation := agent.Update()
-		newAgents[updatedAgentLocation] = agent
+		location := agent.Update()
+		if b.Cells.GetCell(location, hlt.STILL).Owner == b.Owner {
+			newAgents[location] = agent
+		}
+	}
+	for _, cell := range b.Cells.ByOwner[b.Owner] {
+		location := cell.Location()
+		if _, ok := newAgents[location]; !ok {
+			agent := NewAgent(b, location)
+			agent.Update()
+			newAgents[location] = agent
+		}
 	}
 	b.Agents = newAgents
 }
 
+// Moves puts together a list of Moves for each Agent owned
 func (b *Bot) Moves() hlt.MoveSet {
 	var moves = hlt.MoveSet{}
 	for _, agent := range b.Agents {
@@ -266,6 +289,8 @@ func (b *Bot) Moves() hlt.MoveSet {
  ██████ ███████ ███████ ███████ ███████
 */
 
+// Cells represents a subview of the gameMap. Simulated forward with
+// a set of moves, or updated from turn to turn by a bot.
 type Cells struct {
 	Contents map[int]map[int]*Cell
 	Height   int
@@ -286,6 +311,7 @@ type Cells struct {
 	TotalTerritory  map[int]int
 }
 
+// NewCells is a constructor
 func NewCells(x int, y int, width int, height int, gameMap hlt.GameMap) *Cells {
 	cells := &Cells{
 		Height:          height,
@@ -332,7 +358,7 @@ func NewCells(x int, y int, width int, height int, gameMap hlt.GameMap) *Cells {
 	return cells
 }
 
-// Produce a copy of the Cells containing new copies of all contained cells
+// Clone produces a copy of the Cells containing new copies of all contained cells
 func (c *Cells) Clone() *Cells {
 	clone := &Cells{
 		Height:          c.Height,
@@ -364,7 +390,7 @@ func (c *Cells) Clone() *Cells {
 	return clone
 }
 
-// update Cells with Site data from provided GameMap
+// Update Cells with Site data from provided GameMap
 func (c *Cells) Update(gameMap hlt.GameMap) {
 	c.TotalProduction = make(map[int]int)
 	c.TotalStrength = make(map[int]int)
@@ -386,7 +412,7 @@ func (c *Cells) Update(gameMap hlt.GameMap) {
 	}
 }
 
-// applies moves in the same way halite.io would... I think.
+// Simulate applies moves in the same way halite.io would... I think.
 func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 	clone := c.Clone()
 	// used to prevent production on cells that had movement this round
@@ -455,7 +481,7 @@ func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 						}
 						effect[otherCell.Location()][otherOwner] += activeCellForce
 						// Cell was in conflict, it is possible there will not be an owner here following combat
-						otherCell.Owner = NEUTRAL
+						otherCell.Owner = unowned
 					}
 				}
 				for otherOwner, otherPassiveCellForce := range passiveForces[otherCell.Location()] {
@@ -464,11 +490,11 @@ func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 							effect[otherCell.Location()] = make(map[int]int)
 						}
 						effect[otherCell.Location()][otherOwner] += activeCellForce
-						if otherOwner != NEUTRAL {
+						if otherOwner != unowned {
 							effect[cell.Location()][owner] += otherPassiveCellForce
 						}
 						// Cell was in conflict, it is possible there will not be an owner here following combat
-						otherCell.Owner = NEUTRAL
+						otherCell.Owner = unowned
 					}
 				}
 			}
@@ -506,7 +532,7 @@ func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 	// Production for cells that didn't move or fight
 	for _, cell := range clone.GetCells(func(cell *Cell) bool {
 		_, ok := conflictLocations[cell.Location()]
-		return !ok && cell.Owner != NEUTRAL
+		return !ok && cell.Owner != unowned
 	}) {
 		strength := cell.Strength + cell.Production
 		cell.Strength = min(255, strength)
@@ -514,11 +540,13 @@ func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 	return clone
 }
 
+// InBounds allows the user to check if a location is within the Cells bounds
 func (c *Cells) InBounds(location hlt.Location) bool {
 	_, ok := c.Contents[location.X][location.X]
 	return ok
 }
 
+// GetLocation returns a Location for the requested Location
 func (c *Cells) GetLocation(location hlt.Location, direction hlt.Direction) hlt.Location {
 	switch direction {
 	case hlt.NORTH:
@@ -549,11 +577,13 @@ func (c *Cells) GetLocation(location hlt.Location, direction hlt.Direction) hlt.
 	return location
 }
 
+// GetCell returns a Cell for the given Locations
 func (c *Cells) GetCell(location hlt.Location, direction hlt.Direction) *Cell {
 	loc := c.GetLocation(location, direction)
 	return c.Contents[loc.Y][loc.X]
 }
 
+// GetCells returns all the cells that pass the provided test
 func (c *Cells) GetCells(cellTest CellTest) []*Cell {
 	results := make([]*Cell, 0)
 	for y := c.Y; y < c.Y+c.Height; y++ {
@@ -569,10 +599,12 @@ func (c *Cells) GetCells(cellTest CellTest) []*Cell {
 	return results
 }
 
+// Get returns the cell for a given x, y coordinate
 func (c *Cells) Get(x int, y int) *Cell {
 	return c.Contents[y][x]
 }
 
+// String convert the Cells into a string
 func (c *Cells) String() string {
 	var buffer bytes.Buffer
 	buffer.WriteString(fmt.Sprintf("Cells(x:%d, y:%d, w:%d, h:%d)\n", c.X, c.Y, c.Width, c.Height))
@@ -595,6 +627,7 @@ func (c *Cells) String() string {
  ██████ ███████ ███████ ███████
 */
 
+// Cell is a combination of Location and Site
 type Cell struct {
 	Cells      *Cells
 	Y          int
@@ -607,6 +640,7 @@ type Cell struct {
 	_Damage    int
 }
 
+// NewCell is a constructor
 func NewCell(cells *Cells, site hlt.Site, x int, y int) *Cell {
 	return &Cell{
 		Cells:      cells,
@@ -619,6 +653,7 @@ func NewCell(cells *Cells, site hlt.Site, x int, y int) *Cell {
 	}
 }
 
+// Clone produces a copy of the given Cell
 func (c *Cell) Clone(cells *Cells) *Cell {
 	return &Cell{
 		Cells:      cells,
@@ -631,6 +666,7 @@ func (c *Cell) Clone(cells *Cells) *Cell {
 	}
 }
 
+// Update to reflect the new Site info
 func (c *Cell) Update(site hlt.Site) {
 	c.Owner = site.Owner
 	c.Production = site.Production
@@ -638,6 +674,7 @@ func (c *Cell) Update(site hlt.Site) {
 	c._CalcDone = false
 }
 
+// Location returns a hlt.Location for the Cell's x, y coordinates
 func (c *Cell) Location() hlt.Location {
 	return hlt.Location{
 		X: c.X,
@@ -645,6 +682,7 @@ func (c *Cell) Location() hlt.Location {
 	}
 }
 
+// Site returns a hlt.Site for the Cell
 func (c *Cell) Site() hlt.Site {
 	return hlt.Site{
 		Owner:      c.Owner,
@@ -653,10 +691,12 @@ func (c *Cell) Site() hlt.Site {
 	}
 }
 
+// GetNeighbor returns a list of surrounding cells
 func (c *Cell) GetNeighbor(direction hlt.Direction) *Cell {
 	return c.Cells.GetCell(c.Location(), direction)
 }
 
+// Neighbors returns a cell in the given direction from this one
 func (c *Cell) Neighbors() []*Cell {
 	cells := make([]*Cell, 0, 4)
 	for i, direction := range hlt.CARDINALS {
@@ -665,14 +705,15 @@ func (c *Cell) Neighbors() []*Cell {
 	return cells
 }
 
+// Heuristic returns the value of the Cell
 func (c *Cell) Heuristic(owner int) float64 {
 	if c.Owner == 0 && c.Strength > 0 {
 		return float64(c.Production) / float64(c.Strength)
-	} else {
-		return float64(c.Damage())
 	}
+	return float64(c.Damage())
 }
 
+// Border is true if the Cell has at least one neighbor not owned by the Cell's owner
 func (c *Cell) Border() bool {
 	if !c._CalcDone {
 		c.Calc()
@@ -688,7 +729,7 @@ func (c *Cell) Damage() int {
 	return c._Damage
 }
 
-// evaluate sites orthogonal to the given cell
+// Calc evaluates sites orthogonal to the given cell
 func (c *Cell) Calc() {
 	border := false
 	damage := c.Strength
