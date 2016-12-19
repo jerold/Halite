@@ -28,6 +28,29 @@ func min(a, b int) int {
 	return b
 }
 
+func LocationString(location hlt.Location) string {
+	return fmt.Sprintf("(x:%d, y:%d)", location.X, location.Y)
+}
+
+func DirectionString(direction hlt.Direction) string {
+	switch direction {
+	case hlt.NORTH:
+		return "NORTH"
+	case hlt.EAST:
+		return "EAST"
+	case hlt.SOUTH:
+		return "SOUTH"
+	case hlt.WEST:
+		return "WEST"
+	default:
+		return "STILL"
+	}
+}
+
+func ScoreString(os OwnerScore) string {
+	return fmt.Sprintf("Score(p:%d, s:%d, t:%d)[%.3f]", os.Production, os.Strength, os.Territory, os.SingleScore())
+}
+
 /*
 ███████ ████████  █████   ██████ ██   ██
 ██         ██    ██   ██ ██      ██  ██
@@ -185,8 +208,8 @@ func NewBot(owner int, gameMap hlt.GameMap) *Bot {
 
 // Update takes in new map data and updates agents following a turn
 func (b *Bot) Update(gameMap hlt.GameMap) {
-	b.Cells.Update(gameMap)
 	b.GameMap = gameMap
+	b.Cells.Update(gameMap)
 	b.ToBorder = NewBorderFlow(b.Owner, b.BorderCells())
 }
 
@@ -210,26 +233,6 @@ func (b *Bot) Moves() hlt.MoveSet {
 	var moves = hlt.MoveSet{}
 	for _, cell := range b.BorderCells() {
 		moves = append(moves, hlt.Move{Location: cell.Location, Direction: b.BestMoveFromProjection(cell.Location)})
-
-		// bestDirection := hlt.STILL
-		// bestNeighborStrength := maxStrength
-		// bestScore := 0.0
-		// for _, direction := range hlt.CARDINALS {
-		// 	neighbor := cell.GetNeighbor(direction)
-		// 	if neighbor.Owner != cell.Owner {
-		// 		heuristic := neighbor.Heuristic(b.Owner)
-		// 		if heuristic > bestScore {
-		// 			bestDirection = direction
-		// 			bestNeighborStrength = neighbor.Strength
-		// 			bestScore = heuristic
-		// 		}
-		// 	}
-		// }
-		// if cell.Strength > bestNeighborStrength {
-		// 	moves = append(moves, hlt.Move{Location: cell.Location, Direction: bestDirection})
-		// } else {
-		// 	moves = append(moves, hlt.Move{Location: cell.Location, Direction: hlt.STILL})
-		// }
 	}
 	for _, cell := range b.BodyCells() {
 		if cell.Strength > cell.Production*5 {
@@ -255,24 +258,31 @@ func (b *Bot) ProjectedCells(location hlt.Location) *Cells {
 	return NewCells(location.X-2, location.Y-2, 5, 5, b.GameMap)
 }
 
-func (b *Bot) BestMoveFromProjection(location hlt.Location) hlt.Direction {
-	cells := b.ProjectedCells(location)
-	log(cells)
+// ProjectedMoves is the list of locations that will need moves in order to fully simulate Cells
+func (b *Bot) ProjectedMoves(excludedLocation hlt.Location, cells *Cells) []hlt.Location {
 	cellsNeedMoves := cells.GetCells(func(cell *Cell) bool { return cell.Owner != unowned })
 	movesNeeded := make([]hlt.Location, 0, len(cellsNeedMoves))
 	for _, cell := range cellsNeedMoves {
-		if cell.Location != location {
+		if cell.Location != excludedLocation {
 			movesNeeded = append(movesNeeded, cell.Location)
 		}
 	}
+	return movesNeeded
+}
+
+// BestMoveFromProjection projects all possible moves for each cell in a 5x5 copy around the
+// given location. Returning the move that yields the highest score for the location owner
+func (b *Bot) BestMoveFromProjection(location hlt.Location) hlt.Direction {
+	cells := b.ProjectedCells(location)
+	movesNeeded := b.ProjectedMoves(location, cells)
 	owner := cells.Get(location.X, location.Y).Owner
 	maxDirection := hlt.STILL
 	maxScore := 0.0
 	for _, direction := range hlt.Directions {
 		moves := hlt.MoveSet{hlt.Move{Location: location, Direction: direction}}
-		scores := Project(cells, moves, movesNeeded)
+		scores := Project(cells, moves, movesNeeded, 0)
 		singleScore := scores[owner].SingleScore()
-		log(location.X, location.Y, direction, singleScore, scores[owner].Production, scores[owner].Strength, scores[owner].Territory)
+		log(LocationString(hlt.Location{X: location.X, Y: location.Y}), DirectionString(direction), ScoreString(scores[owner]))
 		if singleScore > maxScore {
 			maxDirection = direction
 			maxScore = singleScore
@@ -283,7 +293,8 @@ func (b *Bot) BestMoveFromProjection(location hlt.Location) hlt.Direction {
 
 // Project by simulating cells with picked moves, or if locations still need moves
 // pick the best move for the location owner.
-func Project(cells *Cells, moves hlt.MoveSet, movesNeeded []hlt.Location) map[int]OwnerScore {
+func Project(cells *Cells, moves hlt.MoveSet, movesNeeded []hlt.Location, depth int) map[int]OwnerScore {
+	log("Project Moves:", len(movesNeeded), "Depth:", depth)
 	if len(movesNeeded) == 0 {
 		// all moves made, simulate board and return scores
 		newCells := cells.Simulate(moves)
@@ -300,7 +311,7 @@ func Project(cells *Cells, moves hlt.MoveSet, movesNeeded []hlt.Location) map[in
 	for _, direction := range hlt.Directions {
 		if cells.InBounds(cells.GetLocation(location, direction)) {
 			moves = append(moves, hlt.Move{Location: location, Direction: direction})
-			scores := Project(cells, moves, movesNeeded[1:])
+			scores := Project(cells, moves, movesNeeded[1:], depth+1)
 			singleScore := scores[owner].SingleScore()
 			if singleScore > maxScore {
 				maxScores = scores
@@ -904,8 +915,7 @@ func (c *Cell) String() string {
 */
 
 func main() {
-	conn, gameMap := hlt.VeryNewConnection()
-	// conn, gameMap := hlt.OldConnection("BrevBot")
+	conn, gameMap := hlt.NewConnection()
 	bot := NewBot(conn.PlayerTag, gameMap)
 	conn.SendName("BrevBot")
 	log("Name Sent!")

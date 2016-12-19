@@ -680,9 +680,10 @@ func (c *Cell) String() string {
 */
 
 func main() {
-	conn, gameMap := hlt.NewConnection("v5")
+	conn, gameMap := hlt.NewConnection()
 	bot := NewBot(conn.PlayerTag)
 	bot.UpdateMap(gameMap)
+	conn.SendName("v5")
 	for {
 		var moves hlt.MoveSet
 		gameMap = conn.GetFrame()

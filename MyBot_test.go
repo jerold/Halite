@@ -208,17 +208,88 @@ func TestCellsSimulation4(t *testing.T) {
 	setSite(3, 1, 15, &m.Contents[3][3])
 	setSite(4, 1, 15, &m.Contents[3][0])
 	cells := NewCells(0, 0, 4, 4, m)
-	fmt.Println(cells)
 	moves := hlt.MoveSet{}
 	newCells := cells.Simulate(moves)
-	fmt.Println(newCells)
+
+	owned1 := newCells.ByOwner[1]
+	if owned1.TotalProduction != 1 || owned1.TotalStrength != 16 || owned1.TotalTerritory != 1 {
+		fmt.Printf("Owned 1: p:%d, s:%d, t:%d\n", owned1.TotalProduction, owned1.TotalStrength, owned1.TotalTerritory)
+		t.Fail()
+	}
+	if fmt.Sprintf("%.3f", NewOwnerScore(owned1).SingleScore()) != "0.045" {
+		fmt.Printf("Owned 1 Score: %f\n", NewOwnerScore(owned1).SingleScore())
+		t.Fail()
+	}
+	owned2 := newCells.ByOwner[2]
+	if owned2.TotalProduction != 1 || owned2.TotalStrength != 16 || owned2.TotalTerritory != 1 {
+		fmt.Printf("Owned 2: p:%d, s:%d, t:%d\n", owned2.TotalProduction, owned2.TotalStrength, owned2.TotalTerritory)
+		t.Fail()
+	}
+	if fmt.Sprintf("%.3f", NewOwnerScore(owned2).SingleScore()) != "0.045" {
+		fmt.Printf("Owned 2 Score: %f\n", NewOwnerScore(owned2).SingleScore())
+		t.Fail()
+	}
+	owned3 := newCells.ByOwner[2]
+	if owned3.TotalProduction != 1 || owned3.TotalStrength != 16 || owned3.TotalTerritory != 1 {
+		fmt.Printf("Owned 3: p:%d, s:%d, t:%d\n", owned3.TotalProduction, owned3.TotalStrength, owned3.TotalTerritory)
+		t.Fail()
+	}
+	if fmt.Sprintf("%.3f", NewOwnerScore(owned3).SingleScore()) != "0.045" {
+		fmt.Printf("Owned 3 Score: %f\n", NewOwnerScore(owned3).SingleScore())
+		t.Fail()
+	}
+	owned4 := newCells.ByOwner[2]
+	if owned4.TotalProduction != 1 || owned4.TotalStrength != 16 || owned4.TotalTerritory != 1 {
+		fmt.Printf("Owned 4: p:%d, s:%d, t:%d\n", owned4.TotalProduction, owned4.TotalStrength, owned4.TotalTerritory)
+		t.Fail()
+	}
+	if fmt.Sprintf("%.3f", NewOwnerScore(owned4).SingleScore()) != "0.045" {
+		fmt.Printf("Owned 4 Score: %f\n", NewOwnerScore(owned4).SingleScore())
+		t.Fail()
+	}
 
 	moves = append(moves, hlt.Move{Location: hlt.Location{X: 0, Y: 0}, Direction: hlt.EAST})
 	moves = append(moves, hlt.Move{Location: hlt.Location{X: 0, Y: 3}, Direction: hlt.NORTH})
 	moves = append(moves, hlt.Move{Location: hlt.Location{X: 3, Y: 3}, Direction: hlt.WEST})
 	moves = append(moves, hlt.Move{Location: hlt.Location{X: 3, Y: 0}, Direction: hlt.SOUTH})
 	newCells = newCells.Simulate(moves)
-	fmt.Println(newCells)
+
+	owned1 = newCells.ByOwner[1]
+	if owned1.TotalProduction != 2 || owned1.TotalStrength != 16 || owned1.TotalTerritory != 2 {
+		fmt.Printf("Owned 1: p:%d, s:%d, t:%d\n", owned1.TotalProduction, owned1.TotalStrength, owned1.TotalTerritory)
+		t.Fail()
+	}
+	if fmt.Sprintf("%.3f", NewOwnerScore(owned1).SingleScore()) != "0.077" {
+		fmt.Printf("Owned 1 Score: %f\n", NewOwnerScore(owned1).SingleScore())
+		t.Fail()
+	}
+	owned2 = newCells.ByOwner[2]
+	if owned2.TotalProduction != 2 || owned2.TotalStrength != 16 || owned2.TotalTerritory != 2 {
+		fmt.Printf("Owned 2: p:%d, s:%d, t:%d\n", owned2.TotalProduction, owned2.TotalStrength, owned2.TotalTerritory)
+		t.Fail()
+	}
+	if fmt.Sprintf("%.3f", NewOwnerScore(owned2).SingleScore()) != "0.077" {
+		fmt.Printf("Owned 2 Score: %f\n", NewOwnerScore(owned2).SingleScore())
+		t.Fail()
+	}
+	owned3 = newCells.ByOwner[2]
+	if owned3.TotalProduction != 2 || owned3.TotalStrength != 16 || owned3.TotalTerritory != 2 {
+		fmt.Printf("Owned 3: p:%d, s:%d, t:%d\n", owned3.TotalProduction, owned3.TotalStrength, owned3.TotalTerritory)
+		t.Fail()
+	}
+	if fmt.Sprintf("%.3f", NewOwnerScore(owned3).SingleScore()) != "0.077" {
+		fmt.Printf("Owned 3 Score: %f\n", NewOwnerScore(owned3).SingleScore())
+		t.Fail()
+	}
+	owned4 = newCells.ByOwner[2]
+	if owned4.TotalProduction != 2 || owned4.TotalStrength != 16 || owned4.TotalTerritory != 2 {
+		fmt.Printf("Owned 4: p:%d, s:%d, t:%d\n", owned4.TotalProduction, owned4.TotalStrength, owned4.TotalTerritory)
+		t.Fail()
+	}
+	if fmt.Sprintf("%.3f", NewOwnerScore(owned4).SingleScore()) != "0.077" {
+		fmt.Printf("Owned 4 Score: %f\n", NewOwnerScore(owned4).SingleScore())
+		t.Fail()
+	}
 
 	moves = hlt.MoveSet{}
 	moves = append(moves, hlt.Move{Location: hlt.Location{X: 1, Y: 0}, Direction: hlt.SOUTH})
@@ -226,7 +297,63 @@ func TestCellsSimulation4(t *testing.T) {
 	moves = append(moves, hlt.Move{Location: hlt.Location{X: 2, Y: 3}, Direction: hlt.NORTH})
 	moves = append(moves, hlt.Move{Location: hlt.Location{X: 3, Y: 1}, Direction: hlt.WEST})
 	newCells = newCells.Simulate(moves)
-	fmt.Println(newCells)
+
+	owned1 = newCells.ByOwner[1]
+	if owned1.TotalProduction != 2 || owned1.TotalStrength != 1 || owned1.TotalTerritory != 2 {
+		fmt.Printf("Owned 1: p:%d, s:%d, t:%d\n", owned1.TotalProduction, owned1.TotalStrength, owned1.TotalTerritory)
+		t.Fail()
+	}
+	if fmt.Sprintf("%.3f", NewOwnerScore(owned1).SingleScore()) != "0.065" {
+		fmt.Printf("Owned 1 Score: %f\n", NewOwnerScore(owned1).SingleScore())
+		t.Fail()
+	}
+	owned2 = newCells.ByOwner[2]
+	if owned2.TotalProduction != 2 || owned2.TotalStrength != 1 || owned2.TotalTerritory != 2 {
+		fmt.Printf("Owned 2: p:%d, s:%d, t:%d\n", owned2.TotalProduction, owned2.TotalStrength, owned2.TotalTerritory)
+		t.Fail()
+	}
+	if fmt.Sprintf("%.3f", NewOwnerScore(owned2).SingleScore()) != "0.065" {
+		fmt.Printf("Owned 2 Score: %f\n", NewOwnerScore(owned2).SingleScore())
+		t.Fail()
+	}
+	owned3 = newCells.ByOwner[2]
+	if owned3.TotalProduction != 2 || owned3.TotalStrength != 1 || owned3.TotalTerritory != 2 {
+		fmt.Printf("Owned 3: p:%d, s:%d, t:%d\n", owned3.TotalProduction, owned3.TotalStrength, owned3.TotalTerritory)
+		t.Fail()
+	}
+	if fmt.Sprintf("%.3f", NewOwnerScore(owned3).SingleScore()) != "0.065" {
+		fmt.Printf("Owned 3 Score: %f\n", NewOwnerScore(owned3).SingleScore())
+		t.Fail()
+	}
+	owned4 = newCells.ByOwner[2]
+	if owned4.TotalProduction != 2 || owned4.TotalStrength != 1 || owned4.TotalTerritory != 2 {
+		fmt.Printf("Owned 4: p:%d, s:%d, t:%d\n", owned4.TotalProduction, owned4.TotalStrength, owned4.TotalTerritory)
+		t.Fail()
+	}
+	if fmt.Sprintf("%.3f", NewOwnerScore(owned4).SingleScore()) != "0.065" {
+		fmt.Printf("Owned 4 Score: %f\n", NewOwnerScore(owned4).SingleScore())
+		t.Fail()
+	}
+
+	fmt.Printf("Time: %v\n", time.Now().Sub(startTime))
+}
+
+func TestProjectedMove(t *testing.T) {
+	startTime := time.Now()
+
+	m := MockGameBoard(0, 1, 1, 5, 5)
+	setSite(1, 1, 10, &m.Contents[2][2])
+	setSite(2, 1, 5, &m.Contents[0][2])
+	setSite(2, 1, 5, &m.Contents[2][0])
+	setSite(2, 1, 5, &m.Contents[2][4])
+	setSite(2, 1, 5, &m.Contents[4][2])
+	bot := NewBot(1, m)
+	location := hlt.NewLocation(2, 2)
+	cells := bot.ProjectedCells(location)
+	fmt.Println(cells)
+	locations := bot.ProjectedMoves(location, cells)
+	fmt.Println(locations)
+
 	fmt.Printf("Time: %v\n", time.Now().Sub(startTime))
 }
 
