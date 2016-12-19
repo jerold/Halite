@@ -141,10 +141,11 @@ func NewBorderFlow(owner int, borders []*Cell) FlowField {
 			return maxCost
 		}
 		if via != nil {
+			strengthPenelty := 0
 			if via.Strength+cell.Strength > maxStrength {
-				return maxCost
+				strengthPenelty += maxStrength
 			}
-			return field[via.Location] + float32(cell.Production)
+			return field[via.Location] + float32(cell.Production) + float32(strengthPenelty)
 		}
 		return float32(cell.Production)
 	})
@@ -162,6 +163,7 @@ func NewBorderFlow(owner int, borders []*Cell) FlowField {
 type Bot struct {
 	Owner             int
 	Cells             *Cells
+	GameMap           hlt.GameMap
 	ToBorder          FlowField
 	StartingLocations map[int]hlt.Location
 }
@@ -171,6 +173,7 @@ func NewBot(owner int, gameMap hlt.GameMap) *Bot {
 	bot := &Bot{
 		Owner:             owner,
 		Cells:             NewCells(0, 0, gameMap.Width, gameMap.Height, gameMap),
+		GameMap:           gameMap,
 		StartingLocations: make(map[int]hlt.Location),
 	}
 	bot.ToBorder = NewBorderFlow(bot.Owner, bot.BorderCells())
@@ -183,6 +186,7 @@ func NewBot(owner int, gameMap hlt.GameMap) *Bot {
 // Update takes in new map data and updates agents following a turn
 func (b *Bot) Update(gameMap hlt.GameMap) {
 	b.Cells.Update(gameMap)
+	b.GameMap = gameMap
 	b.ToBorder = NewBorderFlow(b.Owner, b.BorderCells())
 }
 
@@ -204,7 +208,129 @@ func (b *Bot) BodyCells() []*Cell {
 // Moves puts together a list of Moves for each Agent owned
 func (b *Bot) Moves() hlt.MoveSet {
 	var moves = hlt.MoveSet{}
+	for _, cell := range b.BorderCells() {
+		moves = append(moves, hlt.Move{Location: cell.Location, Direction: b.BestMoveFromProjection(cell.Location)})
+
+		// bestDirection := hlt.STILL
+		// bestNeighborStrength := maxStrength
+		// bestScore := 0.0
+		// for _, direction := range hlt.CARDINALS {
+		// 	neighbor := cell.GetNeighbor(direction)
+		// 	if neighbor.Owner != cell.Owner {
+		// 		heuristic := neighbor.Heuristic(b.Owner)
+		// 		if heuristic > bestScore {
+		// 			bestDirection = direction
+		// 			bestNeighborStrength = neighbor.Strength
+		// 			bestScore = heuristic
+		// 		}
+		// 	}
+		// }
+		// if cell.Strength > bestNeighborStrength {
+		// 	moves = append(moves, hlt.Move{Location: cell.Location, Direction: bestDirection})
+		// } else {
+		// 	moves = append(moves, hlt.Move{Location: cell.Location, Direction: hlt.STILL})
+		// }
+	}
+	for _, cell := range b.BodyCells() {
+		if cell.Strength > cell.Production*5 {
+			lowestCostDirection := hlt.STILL
+			lowestCost := float32(maxCost)
+			for _, direction := range hlt.Directions {
+				location := b.Cells.GetLocation(cell.Location, direction)
+				if b.ToBorder[location] < lowestCost {
+					lowestCostDirection = direction
+					lowestCost = b.ToBorder[location]
+				}
+			}
+			moves = append(moves, hlt.Move{Location: cell.Location, Direction: lowestCostDirection})
+		} else {
+			moves = append(moves, hlt.Move{Location: cell.Location, Direction: hlt.STILL})
+		}
+	}
 	return moves
+}
+
+// ProjectedCells is a small cell space for simulating moves
+func (b *Bot) ProjectedCells(location hlt.Location) *Cells {
+	return NewCells(location.X-2, location.Y-2, 5, 5, b.GameMap)
+}
+
+func (b *Bot) BestMoveFromProjection(location hlt.Location) hlt.Direction {
+	cells := b.ProjectedCells(location)
+	log(cells)
+	cellsNeedMoves := cells.GetCells(func(cell *Cell) bool { return cell.Owner != unowned })
+	movesNeeded := make([]hlt.Location, 0, len(cellsNeedMoves))
+	for _, cell := range cellsNeedMoves {
+		if cell.Location != location {
+			movesNeeded = append(movesNeeded, cell.Location)
+		}
+	}
+	owner := cells.Get(location.X, location.Y).Owner
+	maxDirection := hlt.STILL
+	maxScore := 0.0
+	for _, direction := range hlt.Directions {
+		moves := hlt.MoveSet{hlt.Move{Location: location, Direction: direction}}
+		scores := Project(cells, moves, movesNeeded)
+		singleScore := scores[owner].SingleScore()
+		log(location.X, location.Y, direction, singleScore, scores[owner].Production, scores[owner].Strength, scores[owner].Territory)
+		if singleScore > maxScore {
+			maxDirection = direction
+			maxScore = singleScore
+		}
+	}
+	return maxDirection
+}
+
+// Project by simulating cells with picked moves, or if locations still need moves
+// pick the best move for the location owner.
+func Project(cells *Cells, moves hlt.MoveSet, movesNeeded []hlt.Location) map[int]OwnerScore {
+	if len(movesNeeded) == 0 {
+		// all moves made, simulate board and return scores
+		newCells := cells.Simulate(moves)
+		scores := make(map[int]OwnerScore)
+		for owner, ownerCells := range newCells.ByOwner {
+			scores[owner] = NewOwnerScore(ownerCells)
+		}
+		return scores
+	}
+	location := movesNeeded[0]
+	owner := cells.Get(location.X, location.Y).Owner
+	var maxScores map[int]OwnerScore
+	maxScore := 0.0
+	for _, direction := range hlt.Directions {
+		if cells.InBounds(cells.GetLocation(location, direction)) {
+			moves = append(moves, hlt.Move{Location: location, Direction: direction})
+			scores := Project(cells, moves, movesNeeded[1:])
+			singleScore := scores[owner].SingleScore()
+			if singleScore > maxScore {
+				maxScores = scores
+				maxScore = singleScore
+			}
+		}
+	}
+	return maxScores
+}
+
+const pMod = 0.3
+const sMod = 0.2
+const tMod = 0.5
+
+type OwnerScore struct {
+	Production int
+	Strength   int
+	Territory  int
+}
+
+func (os OwnerScore) SingleScore() float64 {
+	return pMod*(float64(os.Production)/25.0) + sMod*(float64(os.Strength)/255.0) + tMod*(float64(os.Territory)/25.0)
+}
+
+func NewOwnerScore(ownedCells *OwnedCells) OwnerScore {
+	return OwnerScore{
+		Production: ownedCells.TotalProduction,
+		Strength:   ownedCells.TotalStrength,
+		Territory:  ownedCells.TotalTerritory,
+	}
 }
 
 // OwnedCells collection of Cells belonging to the same owner with some stats
@@ -233,8 +359,8 @@ func NewOwnedCells() *OwnedCells {
 // Add a cell to the owned cells
 func (o *OwnedCells) Add(cell *Cell) {
 	o.TotalProduction += cell.Production
-	o.TotalProduction += cell.Production
-	o.TotalProduction++
+	o.TotalStrength += cell.Strength
+	o.TotalTerritory++
 	o._cells = append(o._cells, cell)
 	o._calcDone = false
 }
@@ -319,6 +445,8 @@ type Cells struct {
 
 // NewCells is a constructor
 func NewCells(x int, y int, width int, height int, gameMap hlt.GameMap) *Cells {
+	x = (x + gameMap.Width) % gameMap.Width
+	y = (y + gameMap.Height) % gameMap.Height
 	cells := &Cells{
 		Height:        height,
 		Width:         width,
@@ -544,7 +672,9 @@ func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 		cell.Strength = min(255, strength)
 	}
 	// This sucks but we now have to go through and reassign all OwnedCells
-	clone.ByOwner = make(map[int]*OwnedCells)
+	for _, ownedCells := range clone.ByOwner {
+		ownedCells.Reset()
+	}
 	for i := clone.Y; i < clone.Y+clone.Height; i++ {
 		yf := i % clone._sourceHeight
 		for j := clone.X; j < clone.X+clone.Width; j++ {
@@ -605,12 +735,12 @@ func (c *Cells) GetCell(location hlt.Location, direction hlt.Direction) *Cell {
 
 // GetCells returns all the cells that pass the provided test
 func (c *Cells) GetCells(cellTest CellTest) []*Cell {
-	results := make([]*Cell, 0)
+	results := make([]*Cell, 0, 1)
 	for y := c.Y; y < c.Y+c.Height; y++ {
 		yf := y % c._sourceHeight
 		for x := c.X; x < c.X+c.Width; x++ {
 			xf := x % c._sourceWidth
-			cell := c.Get(yf, xf)
+			cell := c.Get(xf, yf)
 			if cellTest(cell) {
 				results = append(results, cell)
 			}

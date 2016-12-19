@@ -24,7 +24,23 @@ func MockGameBoard(owner, production, strength, width, height int) hlt.GameMap {
 	return m
 }
 
-func TestCellsGetLocation(t *testing.T) {
+func TestCellsGetLocation1(t *testing.T) {
+	m := MockGameBoard(0, 1, 2, 5, 5)
+	cells := NewCells(-1, -1, 3, 3, m)
+	cell := cells.Get(4, 4)
+	// East neighbor wraps
+	if fmt.Sprint(cell.GetNeighbor(hlt.EAST)) != "(x:0, y:4)[o:0, p:1, s:2]" {
+		fmt.Println(cell.GetNeighbor(hlt.EAST))
+		t.Fail()
+	}
+	// south neighbor wraps
+	if fmt.Sprint(cell.GetNeighbor(hlt.SOUTH)) != "(x:4, y:0)[o:0, p:1, s:2]" {
+		fmt.Println(cell.GetNeighbor(hlt.SOUTH))
+		t.Fail()
+	}
+}
+
+func TestCellsGetLocation2(t *testing.T) {
 	m := MockGameBoard(0, 1, 2, 5, 5)
 	cells := NewCells(4, 4, 3, 3, m)
 	cell := cells.Get(4, 4)
@@ -79,6 +95,17 @@ func TestCellsSimulation1(t *testing.T) {
 		fmt.Println(newCells.Get(2, 3))
 		t.Fail()
 	}
+
+	owned1 := newCells.ByOwner[1]
+	if owned1.TotalProduction != 0 || owned1.TotalStrength != 45 || owned1.TotalTerritory != 5 {
+		fmt.Printf("Owned 1: p:%d, s:%d, t:%d\n", owned1.TotalProduction, owned1.TotalStrength, owned1.TotalTerritory)
+		t.Fail()
+	}
+	owned2 := newCells.ByOwner[2]
+	if owned2.TotalProduction != 0 || owned2.TotalStrength != 0 || owned2.TotalTerritory != 0 {
+		fmt.Printf("Owned 2: p:%d, s:%d, t:%d\n", owned2.TotalProduction, owned2.TotalStrength, owned2.TotalTerritory)
+		t.Fail()
+	}
 }
 
 func TestCellsSimulation2(t *testing.T) {
@@ -117,6 +144,17 @@ func TestCellsSimulation2(t *testing.T) {
 		fmt.Println(newCells.Get(2, 3))
 		t.Fail()
 	}
+
+	owned1 := newCells.ByOwner[1]
+	if owned1.TotalProduction != 0 || owned1.TotalStrength != 15 || owned1.TotalTerritory != 3 {
+		fmt.Printf("Owned 1: p:%d, s:%d, t:%d\n", owned1.TotalProduction, owned1.TotalStrength, owned1.TotalTerritory)
+		t.Fail()
+	}
+	owned2 := newCells.ByOwner[2]
+	if owned2.TotalProduction != 0 || owned2.TotalStrength != 0 || owned2.TotalTerritory != 1 {
+		fmt.Printf("Owned 2: p:%d, s:%d, t:%d\n", owned2.TotalProduction, owned2.TotalStrength, owned2.TotalTerritory)
+		t.Fail()
+	}
 }
 
 func TestCellsSimulation3(t *testing.T) {
@@ -147,6 +185,17 @@ func TestCellsSimulation3(t *testing.T) {
 	// bottom right
 	if fmt.Sprint(newCells.Get(1, 1)) != "(x:1, y:1)[o:0, p:0, s:0]" {
 		fmt.Println(newCells.Get(1, 1))
+		t.Fail()
+	}
+
+	owned1 := newCells.ByOwner[1]
+	if owned1.TotalProduction != 0 || owned1.TotalStrength != 15 || owned1.TotalTerritory != 1 {
+		fmt.Printf("Owned 1: p:%d, s:%d, t:%d\n", owned1.TotalProduction, owned1.TotalStrength, owned1.TotalTerritory)
+		t.Fail()
+	}
+	owned2 := newCells.ByOwner[2]
+	if owned2.TotalProduction != 0 || owned2.TotalStrength != 15 || owned2.TotalTerritory != 1 {
+		fmt.Printf("Owned 2: p:%d, s:%d, t:%d\n", owned2.TotalProduction, owned2.TotalStrength, owned2.TotalTerritory)
 		t.Fail()
 	}
 }
