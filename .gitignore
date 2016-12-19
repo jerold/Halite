@@ -1,0 +1,10 @@
+halite.exe
+*.txt
+runGame.bat
+*.sh
+src/hlt/gamemap.go
+src/hlt/networking.go
+v5/src/hlt/gamemap.go
+v5/src/hlt/networking.go
+*.hlt
+*.log
