@@ -174,10 +174,14 @@ func FlowString(config int, ff *FlowField, c *Cells) string {
 		for x := c.X; x < c.X+c.Width; x++ {
 			xf := x % c._sourceWidth
 			location := hlt.NewLocation(xf, yf)
-			if config == 0 {
-				buffer.WriteString(fmt.Sprintf("%3d", ff.Field[location]))
+			if _, ok := ff.Field[location]; ok {
+				if config == 0 {
+					buffer.WriteString(fmt.Sprintf("%3d", ff.Field[location]))
+				} else {
+					buffer.WriteString(fmt.Sprintf("%v  ", DirectionArrowString(ff.Directions[location])))
+				}
 			} else {
-				buffer.WriteString(fmt.Sprintf("%v  ", DirectionArrowString(ff.Directions[location])))
+				buffer.WriteString("   ")
 			}
 		}
 		buffer.WriteString("\n")
@@ -185,13 +189,18 @@ func FlowString(config int, ff *FlowField, c *Cells) string {
 	return buffer.String()
 }
 
-// NewFlowField is a constructor
-func NewFlowField(destinations []*Cell, cf CellCost) *FlowField {
-	field := &FlowField{
-		Destinations: destinations,
+func NewEmptyFlow() *FlowField {
+	return &FlowField{
+		Destinations: make([]*Cell, 0, 0),
 		Directions:   make(map[hlt.Location]hlt.Direction),
 		Field:        make(map[hlt.Location]int),
 	}
+}
+
+// NewFlowField is a constructor
+func NewFlowField(destinations []*Cell, cf CellCost) *FlowField {
+	field := NewEmptyFlow()
+	field.Destinations = destinations
 	stack := NewStack()
 	for _, destination := range destinations {
 		field.Directions[destination.Location] = hlt.STILL
@@ -229,6 +238,25 @@ func NewBorderFlow(owner int, borders []*Cell) *FlowField {
 	})
 }
 
+// NewBodyFlow is like Border, but augmented to draw more strength to edges under threat
+func NewBodyFlow(owner int, borders []*Cell, threats map[int]*FlowField) *FlowField {
+	return NewFlowField(borders, func(via *Cell, cell *Cell, field *FlowField) int {
+		if cell.Owner != owner {
+			return maxCost
+		}
+		if via != nil {
+			return field.Field[via.Location] + cell.Production
+		}
+		totalThreat := 0
+		for flowOwner, flow := range threats {
+			if threat, ok := flow.Field[cell.Location]; ok && flowOwner != owner {
+				totalThreat += threat
+			}
+		}
+		return cell.Production - totalThreat
+	})
+}
+
 // NewProdFlow is a constructor
 func NewProdFlow(cell *Cell) *FlowField {
 	return NewFlowField([]*Cell{cell}, func(via *Cell, cell *Cell, field *FlowField) int {
@@ -239,8 +267,8 @@ func NewProdFlow(cell *Cell) *FlowField {
 	})
 }
 
-// NewThreatField is a constructor
-func NewThreatField(owner int, borders []*Cell) *FlowField {
+// NewThreatFlow is a constructor
+func NewThreatFlow(owner int, borders []*Cell) *FlowField {
 	field := NewFlowField(borders, func(via *Cell, cell *Cell, field *FlowField) int {
 		if cell.Owner == owner {
 			return maxCost
@@ -260,6 +288,15 @@ func NewThreatField(owner int, borders []*Cell) *FlowField {
 	return field
 }
 
+func ThreatFlows(cells *Cells) map[int]*FlowField {
+	fields := make(map[int]*FlowField)
+	for owner, ownedCells := range cells.ByOwner {
+		fields[owner] = NewThreatFlow(owner, ownedCells.BorderCells())
+		log(FlowString(1, fields[owner], cells))
+	}
+	return fields
+}
+
 /*
 ██████   ██████  ████████
 ██   ██ ██    ██    ██
@@ -270,10 +307,12 @@ func NewThreatField(owner int, borders []*Cell) *FlowField {
 
 // Bot is in control of Agents for all owned cells.
 type Bot struct {
-	Owner             int
-	Cells             *Cells
-	GameMap           hlt.GameMap
-	ToBorder          *FlowField
+	Owner   int
+	Cells   *Cells
+	GameMap hlt.GameMap
+	// ToBorder          *FlowField
+	BodyFlow          *FlowField
+	ThreatFlows       map[int]*FlowField
 	HighestProduction []hlt.Location
 	ToHighestProd     map[hlt.Location]*FlowField
 	StartingLocations map[int]hlt.Location
@@ -285,9 +324,11 @@ func NewBot(owner int, gameMap hlt.GameMap) *Bot {
 		Owner:             owner,
 		Cells:             NewCells(0, 0, gameMap.Width, gameMap.Height, gameMap),
 		GameMap:           gameMap,
+		BodyFlow:          NewEmptyFlow(),
+		ThreatFlows:       make(map[int]*FlowField),
 		StartingLocations: make(map[int]hlt.Location),
 	}
-	bot.ToBorder = NewBorderFlow(bot.Owner, bot.BorderCells())
+	// bot.ToBorder = NewBorderFlow(bot.Owner, bot.BorderCells())
 	for team, ownedCells := range bot.Cells.ByOwner {
 		bot.StartingLocations[team] = ownedCells.OwnedCells()[0].Location
 	}
@@ -298,7 +339,9 @@ func NewBot(owner int, gameMap hlt.GameMap) *Bot {
 func (b *Bot) Update(gameMap hlt.GameMap) {
 	b.GameMap = gameMap
 	b.Cells.Update(gameMap)
-	b.ToBorder = NewBorderFlow(b.Owner, b.BorderCells())
+	// b.ToBorder = NewBorderFlow(b.Owner, b.BorderCells())
+	b.ThreatFlows = ThreatFlows(b.Cells)
+	b.BodyFlow = NewBodyFlow(b.Owner, b.BorderCells(), b.ThreatFlows)
 }
 
 // OwnedCells returns the Cells owned by this Bot
@@ -324,7 +367,7 @@ func (b *Bot) Moves() hlt.MoveSet {
 	}
 	for _, cell := range b.BodyCells() {
 		if cell.Strength > cell.Production*5 {
-			moves = append(moves, hlt.Move{Location: cell.Location, Direction: b.ToBorder.Directions[cell.Location]})
+			moves = append(moves, hlt.Move{Location: cell.Location, Direction: b.BodyFlow.Directions[cell.Location]})
 		} else {
 			moves = append(moves, hlt.Move{Location: cell.Location, Direction: hlt.STILL})
 		}
