@@ -354,6 +354,8 @@ func TestProjectedMove(t *testing.T) {
 	locations := bot.ProjectedMoves(location, cells)
 	fmt.Println(locations)
 
+	fmt.Println(cells.InBounds(location))
+
 	fmt.Printf("Time: %v\n", time.Now().Sub(startTime))
 }
 
