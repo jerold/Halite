@@ -526,21 +526,21 @@ func NewBot(owner int, gameMap hlt.GameMap) *Bot {
 	}
 	// generate limited fields for all the highest production cells.
 	highestProdCells := bot.Cells.GetHighestProductionCells()
-	nearestCell := highestProdCells[0]
-	nearestDist := gameMap.GetDistance(bot.StartingLocations[owner], nearestCell.Location)
-	for _, highProdCell := range highestProdCells[1:] {
-		distance := gameMap.GetDistance(bot.StartingLocations[owner], highProdCell.Location)
-		if distance < nearestDist {
-			nearestDist = distance
-			nearestCell = highProdCell
-		}
-	}
-	// log("Highest Prod:", len(highestProdCells))
-	bot.ToHighestProd[nearestCell.Location] = NewStrengthFlow(nearestCell)
-	// for _, cell := range highestProdCells {
-	// 	bot.ToHighestProd[nearestCell.Location] = NewStrengthFlow(nearestCell)
-	// 	// log(FlowString(2, bot.ToHighestProd[cell.Location], bot.Cells))
+	// nearestCell := highestProdCells[0]
+	// nearestDist := gameMap.GetDistance(bot.StartingLocations[owner], nearestCell.Location)
+	// for _, highProdCell := range highestProdCells[1:] {
+	// 	distance := gameMap.GetDistance(bot.StartingLocations[owner], highProdCell.Location)
+	// 	if distance < nearestDist {
+	// 		nearestDist = distance
+	// 		nearestCell = highProdCell
+	// 	}
 	// }
+	// log("Highest Prod:", len(highestProdCells))
+	// bot.ToHighestProd[nearestCell.Location] = NewStrengthFlow(nearestCell)
+	for _, cell := range highestProdCells {
+		bot.ToHighestProd[cell.Location] = NewStrengthFlow(cell)
+		// log(FlowString(2, bot.ToHighestProd[cell.Location], bot.Cells))
+	}
 	return bot
 }
 
