@@ -7,6 +7,14 @@ import (
 	"time"
 )
 
+func MockSite() hlt.Site {
+	return hlt.Site{
+		Owner:      0,
+		Production: 0,
+		Strength:   0,
+	}
+}
+
 func setSite(owner, production, strength int, site *hlt.Site) {
 	site.Owner = owner
 	site.Production = production
@@ -22,6 +30,31 @@ func MockGameBoard(owner, production, strength, width, height int) hlt.GameMap {
 		}
 	}
 	return m
+}
+
+func TestStack(t *testing.T) {
+	stack := NewStack()
+	c1 := NewCell(nil, MockSite(), 0, 0)
+	c2 := NewCell(nil, MockSite(), 0, 1)
+	c3 := NewCell(nil, MockSite(), 0, 2)
+	stack.Push(c1)
+	stack.Push(c2)
+	if cell, _ := stack.Peek(); cell != c2 {
+		fmt.Println(stack.Peek())
+		t.Fail()
+	}
+	if !stack.Contains(c1) {
+		fmt.Println("Stack should contain c1!")
+		t.Fail()
+	}
+	if !stack.Contains(c2) {
+		fmt.Println("Stack should contain c2!")
+		t.Fail()
+	}
+	if stack.Contains(c3) {
+		fmt.Println("Stack should NOT contain c3!")
+		t.Fail()
+	}
 }
 
 func TestCellsGetLocation1(t *testing.T) {

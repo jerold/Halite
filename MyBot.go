@@ -6,11 +6,12 @@ import (
 	"fmt"
 	"hlt"
 	"os"
+	"sort"
 )
 
 const logFile = "log.txt"
 const unowned = 0
-const maxCost = 999999
+const maxCost = 10000
 const maxStrength = 255
 
 func max(a, b int) int {
@@ -91,6 +92,7 @@ func ScoreString(os OwnerScore) string {
 type stackable struct {
 	Content  *Cell
 	Previous *stackable
+	Priority int
 }
 
 // Stack is a FILO collection
@@ -101,7 +103,22 @@ type Stack struct {
 
 // NewStack is a constructor
 func NewStack() *Stack {
-	return &Stack{_length: 0}
+	return &Stack{
+		_top:    nil,
+		_length: 0,
+	}
+}
+
+// Contains returns true if the stack contain the cell.
+func (s *Stack) Contains(cell *Cell) bool {
+	if s.isEmpty() {
+		return false
+	}
+	check := s._top
+	for check.Content != cell && check.Previous != nil {
+		check = check.Previous
+	}
+	return check.Content == cell
 }
 
 // Peek at top item
@@ -114,7 +131,7 @@ func (s *Stack) Peek() (*Cell, error) {
 
 // Push new item into the Stack
 func (s *Stack) Push(c *Cell) {
-	newTop := &stackable{Content: c, Previous: s._top}
+	newTop := &stackable{Content: c, Previous: s._top, Priority: maxCost}
 	s._top = newTop
 	s._length++
 }
@@ -130,6 +147,31 @@ func (s *Stack) Pop() (*Cell, error) {
 	pop.Previous = nil
 	s._length--
 	return cell, nil
+}
+
+// Push into stack to a depth determined by cell's priority
+func (s *Stack) PushPriority(c *Cell, priority int) {
+	if s._top == nil || priority < s._top.Priority {
+		newTop := &stackable{Content: c, Previous: s._top, Priority: priority}
+		s._top = newTop
+		s._length++
+		return
+	}
+	prev := s._top.Previous
+	current := s._top
+	for prev != nil {
+		// insert cell between current and previous
+		if priority < prev.Priority {
+			current.Previous = &stackable{Content: c, Previous: prev, Priority: priority}
+			s._length++
+			return
+		}
+		current = prev
+		prev = prev.Previous
+	}
+	// at end
+	current.Previous = &stackable{Content: c, Previous: nil, Priority: priority}
+	s._length++
 }
 
 func (s *Stack) isEmpty() bool {
@@ -153,6 +195,39 @@ func log(a ...interface{}) {
 	f.Close()
 }
 
+type CellComp struct {
+	Cell  *Cell
+	Value int
+}
+
+type CellComps []CellComp
+
+func (slice CellComps) Len() int {
+	return len(slice)
+}
+
+func (slice CellComps) Less(i, j int) bool {
+	return slice[i].Value < slice[j].Value
+}
+
+func (slice CellComps) Swap(i, j int) {
+	slice[i], slice[j] = slice[j], slice[i]
+}
+
+func SortNeighborsByDistanceToCell(cell *Cell, neighbors []*Cell) []*Cell {
+	sortCellComps := CellComps{}
+	for _, neighbor := range neighbors {
+		distance := cell.Cells.GameMap.GetDistance(cell.Location, neighbor.Location)
+		sortCellComps = append(sortCellComps, CellComp{Cell: neighbor, Value: distance})
+	}
+	sort.Sort(sortCellComps)
+	sortedCells := make([]*Cell, 0, len(neighbors))
+	for _, cellComp := range sortCellComps {
+		sortedCells = append(sortedCells, cellComp.Cell)
+	}
+	return sortedCells
+}
+
 // CellTest is a function used to filter or include cells that meet described criteria
 type CellTest func(cell *Cell) bool
 
@@ -166,19 +241,88 @@ type FlowField struct {
 	Field        map[hlt.Location]int
 }
 
+// PathString returns a string representing the pathing indicated by params
+func PathString(prev []hlt.Direction, next hlt.Direction) string {
+	dirs := make(map[hlt.Direction]bool)
+	dirs[next] = true
+	for _, dir := range prev {
+		dirs[dir] = true
+	}
+
+	north := dirs[hlt.NORTH] || next == hlt.NORTH
+	east := dirs[hlt.EAST] || next == hlt.EAST
+	south := dirs[hlt.SOUTH] || next == hlt.SOUTH
+	west := dirs[hlt.WEST] || next == hlt.WEST
+
+	if north && east && south && west {
+		return fmt.Sprintf("x")
+		// return fmt.Sprintf("%c", 0x253C) // ┼
+	}
+
+	if north && east && south && !west {
+		return fmt.Sprintf("%c", 0x251C) // ├
+	} else if north && east && !south && west {
+		return fmt.Sprintf("%c", 0x2534) // ┴
+	} else if north && !east && south && west {
+		return fmt.Sprintf("%c", 0x2524) // ┤
+	} else if !north && east && south && west {
+		return fmt.Sprintf("%c", 0x252C) // ┬
+	}
+
+	if north && east && !south && !west {
+		return fmt.Sprintf("%c", 0x2514) // └
+	} else if north && !east && !south && west {
+		return fmt.Sprintf("%c", 0x2518) // ┘
+	} else if !north && !east && south && west {
+		return fmt.Sprintf("%c", 0x2510) // ┐
+	} else if !north && east && south && !west {
+		return fmt.Sprintf("%c", 0x250C) // ┌
+	} else if north && !east && south && !west {
+		return fmt.Sprintf("%c", 0x2502) // │
+	} else if !north && east && !south && west {
+		return fmt.Sprintf("%c", 0x2500) // ─
+	}
+
+	if north {
+		return fmt.Sprintf("%c", 0x2575) // ╵
+	} else if east {
+		return fmt.Sprintf("%c", 0x2576) // ╶
+	} else if south {
+		return fmt.Sprintf("%c", 0x2577) // ╷
+	} else if west {
+		return fmt.Sprintf("%c", 0x2574) // ╴
+	}
+
+	return fmt.Sprintf(" ")
+	// return fmt.Sprintf("%c", 0x253C) // ┼
+}
+
 // FlowString converts the field into a string
 func FlowString(config int, ff *FlowField, c *Cells) string {
 	var buffer bytes.Buffer
 	for y := c.Y; y < c.Y+c.Height; y++ {
-		yf := y % c._sourceHeight
+		yf := y % c.GameMap.Height
 		for x := c.X; x < c.X+c.Width; x++ {
-			xf := x % c._sourceWidth
+			xf := x % c.GameMap.Width
 			location := hlt.NewLocation(xf, yf)
 			if _, ok := ff.Field[location]; ok {
 				if config == 0 {
 					buffer.WriteString(fmt.Sprintf("%3d", ff.Field[location]))
-				} else {
+				} else if config == 1 {
 					buffer.WriteString(fmt.Sprintf("%v  ", DirectionArrowString(ff.Directions[location])))
+				} else if config == 2 {
+					dirs := make([]hlt.Direction, 0, 4)
+					for _, direction := range hlt.CARDINALS {
+						if dir, ok := ff.Directions[c.GetLocation(location, direction)]; ok && dir == opposite(direction) {
+							dirs = append(dirs, direction)
+						}
+					}
+					if contains(c.Get(location.X, location.Y), ff.Destinations) {
+						buffer.WriteString(fmt.Sprintf("[%s]", PathString(dirs, ff.Directions[location])))
+					} else {
+						buffer.WriteString(fmt.Sprintf(" %s ", PathString(dirs, ff.Directions[location])))
+					}
+
 				}
 			} else {
 				buffer.WriteString("   ")
@@ -197,15 +341,17 @@ func NewEmptyFlow() *FlowField {
 	}
 }
 
-// NewFlowField is a constructor
+// NewFlowField is a constructor. Limit cell can stop field generation beyond that cell.
 func NewFlowField(destinations []*Cell, cf CellCost) *FlowField {
 	field := NewEmptyFlow()
 	field.Destinations = destinations
 	stack := NewStack()
+	// limitCost := maxCost
 	for _, destination := range destinations {
 		field.Directions[destination.Location] = hlt.STILL
-		field.Field[destination.Location] = cf(nil, destination, field)
-		stack.Push(destination)
+		cost := cf(nil, destination, field)
+		field.Field[destination.Location] = cost
+		stack.PushPriority(destination, cost)
 	}
 	oppCount := 0
 	for stack.isNotEmpty() {
@@ -217,7 +363,7 @@ func NewFlowField(destinations []*Cell, cf CellCost) *FlowField {
 				if value, ok := field.Field[neighbor.Location]; newCost < maxCost && (!ok || value > newCost) {
 					field.Directions[neighbor.Location] = opposite(direction)
 					field.Field[neighbor.Location] = newCost
-					stack.Push(neighbor)
+					stack.PushPriority(neighbor, newCost)
 				}
 			}
 		}
@@ -239,7 +385,30 @@ func NewBorderFlow(owner int, borders []*Cell) *FlowField {
 }
 
 // NewBodyFlow is like Border, but augmented to draw more strength to edges under threat
-func NewBodyFlow(owner int, borders []*Cell, threats map[int]*FlowField) *FlowField {
+func NewBodyFlow(owner int, borders []*Cell, threats map[int]*FlowField, highProds map[hlt.Location]*FlowField) *FlowField {
+	nearestProdOwner := owner
+	var nearestProdLoc hlt.Location
+	nearestProdCost := maxCost
+	var nearestThreatTeam int
+	nearestThreadCost := 0
+	for _, borderCell := range borders {
+		for location, flow := range highProds {
+			prodOwner := borderCell.Cells.Get(location.X, location.Y).Owner
+			if flow.Field[borderCell.Location] < nearestProdCost {
+				nearestProdOwner = prodOwner
+				nearestProdLoc = location
+				nearestProdCost = flow.Field[borderCell.Location]
+			}
+		}
+		for team, flow := range threats {
+			if team != owner {
+				if flow.Field[borderCell.Location] > nearestThreadCost {
+					nearestThreatTeam = team
+					nearestThreadCost = flow.Field[borderCell.Location]
+				}
+			}
+		}
+	}
 	return NewFlowField(borders, func(via *Cell, cell *Cell, field *FlowField) int {
 		if cell.Owner != owner {
 			return maxCost
@@ -247,13 +416,13 @@ func NewBodyFlow(owner int, borders []*Cell, threats map[int]*FlowField) *FlowFi
 		if via != nil {
 			return field.Field[via.Location] + cell.Production
 		}
-		totalThreat := 0
-		for flowOwner, flow := range threats {
-			if threat, ok := flow.Field[cell.Location]; ok && flowOwner != owner {
-				totalThreat += threat
-			}
+		if threatField, ok := threats[nearestThreatTeam]; ok && nearestThreatTeam != unowned && nearestThreatTeam != owner {
+			return cell.Production - threatField.Field[cell.Location]
 		}
-		return cell.Production - totalThreat
+		if prodField, ok := highProds[nearestProdLoc]; ok && nearestProdOwner != owner {
+			return cell.Production + prodField.Field[cell.Location]
+		}
+		return cell.Production
 	})
 }
 
@@ -267,10 +436,32 @@ func NewProdFlow(cell *Cell) *FlowField {
 	})
 }
 
+// NewStrengthFlow is a constructor. Produces a field where cost is the strength between
+// any cell and the one provided.
+func NewStrengthFlow(cell *Cell) *FlowField {
+	return NewFlowField([]*Cell{cell}, func(via *Cell, cell *Cell, field *FlowField) int {
+		if via != nil {
+			return field.Field[via.Location] + cell.Strength
+		}
+		return cell.Strength
+	})
+}
+
+func contains(cell *Cell, cells []*Cell) bool {
+	for _, otherCell := range cells {
+		if otherCell == cell {
+			return true
+		}
+	}
+	return false
+}
+
 // NewThreatFlow is a constructor
 func NewThreatFlow(owner int, borders []*Cell) *FlowField {
 	field := NewFlowField(borders, func(via *Cell, cell *Cell, field *FlowField) int {
-		if cell.Owner == owner {
+		if contains(cell, borders) {
+			return 0 - cell.Strength
+		} else if cell.Owner == owner {
 			return maxCost
 		}
 		if via != nil {
@@ -292,7 +483,7 @@ func ThreatFlows(cells *Cells) map[int]*FlowField {
 	fields := make(map[int]*FlowField)
 	for owner, ownedCells := range cells.ByOwner {
 		fields[owner] = NewThreatFlow(owner, ownedCells.BorderCells())
-		log(FlowString(1, fields[owner], cells))
+		// log(FlowString(0, fields[owner], cells))
 	}
 	return fields
 }
@@ -307,13 +498,12 @@ func ThreatFlows(cells *Cells) map[int]*FlowField {
 
 // Bot is in control of Agents for all owned cells.
 type Bot struct {
-	Owner   int
-	Cells   *Cells
-	GameMap hlt.GameMap
+	Owner int
+	Cells *Cells
+	// GameMap hlt.GameMap
 	// ToBorder          *FlowField
 	BodyFlow          *FlowField
 	ThreatFlows       map[int]*FlowField
-	HighestProduction []hlt.Location
 	ToHighestProd     map[hlt.Location]*FlowField
 	StartingLocations map[int]hlt.Location
 }
@@ -321,27 +511,37 @@ type Bot struct {
 // NewBot is a constructor
 func NewBot(owner int, gameMap hlt.GameMap) *Bot {
 	bot := &Bot{
-		Owner:             owner,
-		Cells:             NewCells(0, 0, gameMap.Width, gameMap.Height, gameMap),
-		GameMap:           gameMap,
+		Owner: owner,
+		Cells: NewCells(0, 0, gameMap.Width, gameMap.Height, gameMap),
+		// GameMap:           gameMap,
 		BodyFlow:          NewEmptyFlow(),
 		ThreatFlows:       make(map[int]*FlowField),
+		ToHighestProd:     make(map[hlt.Location]*FlowField),
 		StartingLocations: make(map[int]hlt.Location),
 	}
-	// bot.ToBorder = NewBorderFlow(bot.Owner, bot.BorderCells())
+	// set starting positions for all teams to their center of mass location
 	for team, ownedCells := range bot.Cells.ByOwner {
-		bot.StartingLocations[team] = ownedCells.OwnedCells()[0].Location
+		com := ownedCells.CenterOfMass()
+		bot.StartingLocations[team] = bot.Cells.GetSafeLocation(com.X, com.Y)
+	}
+	// generate limited fields for all the highest production cells.
+	highestProdCells := bot.Cells.GetHighestProductionCells()
+	// log("Highest Prod:", len(highestProdCells))
+	for _, cell := range highestProdCells {
+		bot.ToHighestProd[cell.Location] = NewStrengthFlow(cell)
+		// log(FlowString(2, bot.ToHighestProd[cell.Location], bot.Cells))
 	}
 	return bot
 }
 
 // Update takes in new map data and updates agents following a turn
 func (b *Bot) Update(gameMap hlt.GameMap) {
-	b.GameMap = gameMap
+	// b.GameMap = gameMap
 	b.Cells.Update(gameMap)
 	// b.ToBorder = NewBorderFlow(b.Owner, b.BorderCells())
 	b.ThreatFlows = ThreatFlows(b.Cells)
-	b.BodyFlow = NewBodyFlow(b.Owner, b.BorderCells(), b.ThreatFlows)
+	b.BodyFlow = NewBodyFlow(b.Owner, b.BorderCells(), b.ThreatFlows, b.ToHighestProd)
+	// log(FlowString(2, b.BodyFlow, b.Cells))
 }
 
 // OwnedCells returns the Cells owned by this Bot
@@ -359,11 +559,28 @@ func (b *Bot) BodyCells() []*Cell {
 	return b.Cells.ByOwner[b.Owner].BodyCells()
 }
 
+func (b *Bot) Engaged() bool {
+	for team, flow := range b.ThreatFlows {
+		if team != unowned && team != b.Owner {
+			for _, cell := range b.BorderCells() {
+				if flow.Field[cell.Location] > 0 {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // Moves puts together a list of Moves for each Agent owned
 func (b *Bot) Moves() hlt.MoveSet {
 	var moves = hlt.MoveSet{}
 	for _, cell := range b.BorderCells() {
-		moves = append(moves, b.MoveStrategyProjection(cell))
+		if b.Engaged() {
+			moves = append(moves, b.MoveStrategyV5(cell))
+		} else {
+			moves = append(moves, b.MoveStrategyProfit(cell))
+		}
 	}
 	for _, cell := range b.BodyCells() {
 		if cell.Strength > cell.Production*5 {
@@ -375,6 +592,64 @@ func (b *Bot) Moves() hlt.MoveSet {
 	return moves
 }
 
+func (b *Bot) MoveStrategyProfit(cell *Cell) hlt.Move {
+	var nearestProdLoc hlt.Location
+	nearestProdCost := maxCost
+	for location, flow := range b.ToHighestProd {
+		if flow.Field[cell.Location] < nearestProdCost {
+			nearestProdLoc = location
+			nearestProdCost = flow.Field[cell.Location]
+		}
+	}
+	if nearestProdCost != maxCost && b.Cells.Get(nearestProdLoc.X, nearestProdLoc.Y).Owner != b.Owner {
+		direction := b.ToHighestProd[nearestProdLoc].Directions[cell.Location]
+		destination := b.Cells.GetCell(cell.Location, direction)
+		if cell.Strength > destination.Strength {
+			return hlt.Move{Location: cell.Location, Direction: direction}
+		}
+		return hlt.Move{Location: cell.Location, Direction: hlt.STILL}
+	}
+	return b.MoveStrategyV5(cell)
+}
+
+func (b *Bot) MoveStrategyV5(cell *Cell) hlt.Move {
+	targetDirection := hlt.STILL
+	var targetCell *Cell
+	targetHeuristic := 0.0
+	for dir, neighbor := range cell.Neighbors() {
+		direction := hlt.Direction(dir + 1)
+		if neighbor.Owner != b.Owner {
+			otherHeuristic := neighbor.Heuristic(b.Owner)
+			if targetCell == nil || otherHeuristic > targetHeuristic {
+				targetCell = neighbor
+				targetDirection = direction
+				targetHeuristic = otherHeuristic
+			}
+		}
+	}
+	if targetCell != nil && targetCell.Strength < cell.Strength {
+		return hlt.Move{Location: cell.Location, Direction: targetDirection}
+	}
+	return hlt.Move{Location: cell.Location, Direction: hlt.STILL}
+}
+
+func (b *Bot) MoveStrategyOverkill(cell *Cell) hlt.Move {
+	maxOverkillDirection := hlt.STILL
+	maxOverkill := 0
+	for _, direction := range hlt.Directions {
+		otherCell := b.Cells.GetCell(cell.Location, direction)
+		overkill := otherCell.Overkill(b.Owner, cell.Strength)
+		if overkill > maxOverkill {
+			maxOverkillDirection = direction
+			maxOverkill = overkill
+		}
+	}
+	return hlt.Move{
+		Location:  cell.Location,
+		Direction: maxOverkillDirection,
+	}
+}
+
 // MoveStrategyProjection is an Expensive movement strategy where board state
 // is projected for all possible moves around a cell, from which we pick the best.
 func (b *Bot) MoveStrategyProjection(cell *Cell) hlt.Move {
@@ -384,11 +659,11 @@ func (b *Bot) MoveStrategyProjection(cell *Cell) hlt.Move {
 	}
 }
 
-const simSize = 3
+const simSize = 5
 
 // ProjectedCells is a small cell space for simulating moves
 func (b *Bot) ProjectedCells(location hlt.Location) *Cells {
-	return NewCells(location.X-simSize/2, location.Y-simSize/2, simSize, simSize, b.GameMap)
+	return NewCells(location.X-simSize/2, location.Y-simSize/2, simSize, simSize, b.Cells.GameMap)
 }
 
 // ProjectedMoves is the list of locations that will need moves in order to fully simulate Cells
@@ -592,8 +867,9 @@ type Cells struct {
 	X        int
 	Y        int
 	// Original map dimensions
-	_sourceHeight int
-	_sourceWidth  int
+	GameMap hlt.GameMap
+	// _sourceHeight int
+	// _sourceWidth  int
 	// Ownership changes between turns
 	ByOwner map[int]*OwnedCells
 	// Production stats
@@ -607,12 +883,13 @@ func NewCells(x int, y int, width int, height int, gameMap hlt.GameMap) *Cells {
 	x = (x + gameMap.Width) % gameMap.Width
 	y = (y + gameMap.Height) % gameMap.Height
 	cells := &Cells{
-		Height:        height,
-		Width:         width,
-		X:             x,
-		Y:             y,
-		_sourceHeight: gameMap.Height,
-		_sourceWidth:  gameMap.Width,
+		Height:  height,
+		Width:   width,
+		X:       x,
+		Y:       y,
+		GameMap: gameMap,
+		// _sourceHeight: gameMap.Height,
+		// _sourceWidth:  gameMap.Width,
 		ByOwner:       make(map[int]*OwnedCells),
 		AvgProduction: 0,
 		MaxProduction: 0,
@@ -621,10 +898,10 @@ func NewCells(x int, y int, width int, height int, gameMap hlt.GameMap) *Cells {
 	contents := make(map[int]map[int]*Cell)
 	sum := 0
 	for i := y; i < y+height; i++ {
-		yf := i % cells._sourceHeight
+		yf := i % gameMap.Height
 		contents[yf] = make(map[int]*Cell)
 		for j := x; j < x+width; j++ {
-			xf := j % cells._sourceWidth
+			xf := j % gameMap.Width
 			site := gameMap.Contents[yf][xf]
 			cell := NewCell(cells, gameMap.Contents[yf][xf], xf, yf)
 			contents[yf][xf] = cell
@@ -657,8 +934,7 @@ func (c *Cells) Clone() *Cells {
 		Width:         c.Width,
 		X:             c.X,
 		Y:             c.Y,
-		_sourceHeight: c._sourceHeight,
-		_sourceWidth:  c._sourceWidth,
+		GameMap:       c.GameMap,
 		ByOwner:       make(map[int]*OwnedCells),
 		AvgProduction: c.AvgProduction,
 		MaxProduction: c.MaxProduction,
@@ -666,10 +942,10 @@ func (c *Cells) Clone() *Cells {
 	}
 	contents := make(map[int]map[int]*Cell)
 	for y := c.Y; y < c.Y+c.Height; y++ {
-		yf := y % c._sourceHeight
+		yf := y % c.GameMap.Height
 		contents[yf] = make(map[int]*Cell)
 		for x := c.X; x < c.X+c.Width; x++ {
-			xf := x % c._sourceWidth
+			xf := x % c.GameMap.Width
 			cell := c.Contents[yf][xf].Clone(clone)
 			contents[yf][xf] = cell
 			// Add to Owner's OwnedCells
@@ -690,9 +966,9 @@ func (c *Cells) Update(gameMap hlt.GameMap) {
 	}
 	// Cells my not be the full size of gameMap, only iterate Cells contents
 	for y := c.Y; y < c.Y+c.Height; y++ {
-		yf := y % c._sourceHeight
+		yf := y % c.GameMap.Height
 		for x := c.X; x < c.X+c.Width; x++ {
-			xf := x % c._sourceWidth
+			xf := x % c.GameMap.Width
 			site := gameMap.Contents[yf][xf]
 			cell := c.Get(xf, yf)
 			cell.Update(site)
@@ -837,9 +1113,9 @@ func (c *Cells) Simulate(moves hlt.MoveSet) *Cells {
 		ownedCells.Reset()
 	}
 	for i := clone.Y; i < clone.Y+clone.Height; i++ {
-		yf := i % clone._sourceHeight
+		yf := i % clone.GameMap.Height
 		for j := clone.X; j < clone.X+clone.Width; j++ {
-			xf := j % clone._sourceWidth
+			xf := j % clone.GameMap.Width
 			cell := clone.Contents[yf][xf]
 			// Add to Owner's OwnedCells
 			if _, ok := clone.ByOwner[cell.Owner]; !ok {
@@ -859,33 +1135,7 @@ func (c *Cells) InBounds(location hlt.Location) bool {
 
 // GetLocation returns a Location for the requested Location
 func (c *Cells) GetLocation(location hlt.Location, direction hlt.Direction) hlt.Location {
-	switch direction {
-	case hlt.NORTH:
-		if location.Y == 0 {
-			location.Y = c._sourceHeight - 1
-		} else {
-			location.Y--
-		}
-	case hlt.EAST:
-		if location.X == c._sourceWidth-1 {
-			location.X = 0
-		} else {
-			location.X++
-		}
-	case hlt.SOUTH:
-		if location.Y == c._sourceHeight-1 {
-			location.Y = 0
-		} else {
-			location.Y++
-		}
-	case hlt.WEST:
-		if location.X == 0 {
-			location.X = c._sourceWidth - 1
-		} else {
-			location.X--
-		}
-	}
-	return location
+	return c.GameMap.GetLocation(location, direction)
 }
 
 // GetCell returns a Cell for the given Locations
@@ -898,9 +1148,9 @@ func (c *Cells) GetCell(location hlt.Location, direction hlt.Direction) *Cell {
 func (c *Cells) GetCells(cellTest CellTest) []*Cell {
 	results := make([]*Cell, 0, 1)
 	for y := c.Y; y < c.Y+c.Height; y++ {
-		yf := y % c._sourceHeight
+		yf := y % c.GameMap.Height
 		for x := c.X; x < c.X+c.Width; x++ {
-			xf := x % c._sourceWidth
+			xf := x % c.GameMap.Width
 			cell := c.Get(xf, yf)
 			if cellTest(cell) {
 				results = append(results, cell)
@@ -913,9 +1163,9 @@ func (c *Cells) GetCells(cellTest CellTest) []*Cell {
 // ForEach performs some function for each cell in Cells
 func (c *Cells) ForEach(fn func(cell *Cell)) {
 	for y := c.Y; y < c.Y+c.Height; y++ {
-		yf := y % c._sourceHeight
+		yf := y % c.GameMap.Height
 		for x := c.X; x < c.X+c.Width; x++ {
-			xf := x % c._sourceWidth
+			xf := x % c.GameMap.Width
 			fn(c.Get(xf, yf))
 		}
 	}
@@ -935,7 +1185,9 @@ func (c *Cells) Get(x int, y int) *Cell {
 
 // GetSafeLocation returns the location as one that is InBounds
 func (c *Cells) GetSafeLocation(x, y int) hlt.Location {
-	return hlt.NewLocation((x+c._sourceWidth)%c._sourceWidth, (y+c._sourceHeight)%c._sourceHeight)
+	height := c.GameMap.Height
+	width := c.GameMap.Width
+	return hlt.NewLocation((x+width)%width, (y+height)%height)
 }
 
 // String convert the Cells into a string
@@ -943,9 +1195,9 @@ func (c *Cells) String() string {
 	var buffer bytes.Buffer
 	buffer.WriteString(fmt.Sprintf("Cells(x:%d, y:%d, w:%d, h:%d)\n", c.X, c.Y, c.Width, c.Height))
 	for y := c.Y; y < c.Y+c.Height; y++ {
-		yf := y % c._sourceHeight
+		yf := y % c.GameMap.Height
 		for x := c.X; x < c.X+c.Width; x++ {
-			xf := x % c._sourceWidth
+			xf := x % c.GameMap.Width
 			buffer.WriteString(fmt.Sprintf("%v, ", c.Contents[yf][xf].String()))
 		}
 		buffer.WriteString("\n")
@@ -1040,6 +1292,24 @@ func (c *Cell) Border() bool {
 		c.Calc()
 	}
 	return c._border
+}
+
+// Heuristic prod / strength or overkill
+func (c *Cell) Heuristic(owner int) float64 {
+	if c.Owner == 0 && c.Strength > 0 {
+		return float64(c.Production) / float64(c.Strength)
+	}
+	return float64(c.TotalDamage(owner))
+}
+
+func (c *Cell) TotalDamage(owner int) int {
+	totalDamage := c.Strength
+	for _, neighbor := range c.Neighbors() {
+		if neighbor.Owner != unowned && neighbor.Owner != owner {
+			totalDamage += neighbor.Strength
+		}
+	}
+	return totalDamage
 }
 
 // Overkill is the damage inflicted minus strength lost in doing so.
